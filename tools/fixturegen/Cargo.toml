@@ -1,0 +1,12 @@
+[package]
+name = "fixturegen"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nominal-streaming = "0.9.6"
+prost = "0.13"
+conjure-object = "5"
+conjure-http = "5"
+snap = "1"
+zstd = "0.13"

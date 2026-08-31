@@ -53,3 +53,17 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# Build output
+build/
+
+# MATLAB/Simulink artifacts
+*.mexw64
+*.mexa64
+*.mexmaci64
+slprj/
+*.slxc
+
+.claude
+.vscode
+
