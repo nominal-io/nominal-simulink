@@ -80,10 +80,16 @@ typedef struct {
 typedef struct {
     uint64_t rows_accepted;    /* handed to the library by nm_push */
     uint64_t rows_sent;        /* acknowledged by the server */
-    uint64_t rows_dropped;     /* discarded because the buffer was full */
+    uint64_t rows_dropped;     /* discarded: buffer full, or the request failed */
     uint64_t requests_ok;
     uint64_t requests_failed;
     long     last_http_status; /* 0 if no request has completed yet */
+
+    /* Why the last failure happened — a transport message, or the server's error
+     * body, which is a conjure envelope carrying an errorInstanceId. Empty when
+     * nothing has failed. Without this a caller has no way to tell a working stream
+     * from one silently discarding everything, since both keep running. */
+    char last_error[256];
 } nm_stats_t;
 
 /*
@@ -124,6 +130,16 @@ void nm_close(nm_stream *s);
 
 /* Human-readable text for a status code. Returns a static string; never NULL. */
 const char *nm_strerror(nm_status status);
+
+/*
+ * Current wall-clock time as nanoseconds since the Unix epoch.
+ *
+ * A convenience, not something the library uses: nm_push always takes the timestamp
+ * from the caller, because a model may be stamping simulation time or a
+ * PTP-disciplined target clock rather than host wall time. Resolution follows the
+ * platform and is typically coarser than a nanosecond.
+ */
+int64_t nm_now_nanos(void);
 
 #ifdef __cplusplus
 }

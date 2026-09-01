@@ -3,7 +3,15 @@
 add_library(nominalstream
   src/nominal_stream.c
   src/nm_encode.c
+  src/nm_ring.c
+  src/nm_http.c
 )
+
+# libcurl carries the HTTPS. Official QNX builds exist (curl.se/qnx ships 8.17.0 for
+# SDP 7.1) and OpenSSL ships with Neutrino, which is what makes the QNX target
+# tractable without any Rust toolchain.
+find_package(CURL REQUIRED)
+target_link_libraries(nominalstream PRIVATE CURL::libcurl)
 
 target_include_directories(nominalstream
   PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -33,6 +41,12 @@ if(NOT WIN32)
   target_link_libraries(nominalstream PRIVATE Threads::Threads)
 endif()
 
+add_executable(nmstream-demo examples/nmstream_demo.c)
+target_link_libraries(nmstream-demo PRIVATE nominalstream)
+if(NOT WIN32)
+  target_link_libraries(nmstream-demo PRIVATE m)
+endif()
+
 if(BUILD_TESTING)
   add_executable(test_encode tests/test_encode.c)
   target_link_libraries(test_encode PRIVATE nominalstream)
@@ -40,6 +54,11 @@ if(BUILD_TESTING)
   add_test(NAME encode
            COMMAND test_encode
                    ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/body_identity.pb)
+
+  add_executable(test_ring tests/test_ring.c)
+  target_link_libraries(test_ring PRIVATE nominalstream)
+  target_include_directories(test_ring PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME ring COMMAND test_ring)
 endif()
 
 # TODO, in order:
