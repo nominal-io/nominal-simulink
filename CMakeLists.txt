@@ -11,6 +11,12 @@ project(nominal-simulink
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+# Extensions on, deliberately: strict -std=c99 hides POSIX declarations behind feature
+# test macros, so nanosleep and clock_gettime would come through as implicit
+# declarations. -std=gnu99 exposes them without sprinkling _POSIX_C_SOURCE through the
+# sources, where a single misordered include would break it again.
+set(CMAKE_C_EXTENSIONS ON)
+
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()

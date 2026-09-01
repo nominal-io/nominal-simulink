@@ -19,19 +19,19 @@
 
 typedef HANDLE nm_thread;
 
-static int nm_thread_start(nm_thread *t, unsigned long (__stdcall *fn)(void *), void *arg)
+static inline int nm_thread_start(nm_thread *t, unsigned long (__stdcall *fn)(void *), void *arg)
 {
     *t = CreateThread(NULL, 0, fn, arg, 0, NULL);
     return (*t == NULL) ? -1 : 0;
 }
 
-static void nm_thread_join(nm_thread t)
+static inline void nm_thread_join(nm_thread t)
 {
     WaitForSingleObject(t, INFINITE);
     CloseHandle(t);
 }
 
-static void nm_sleep_ms(uint32_t ms)
+static inline void nm_sleep_ms(uint32_t ms)
 {
     Sleep(ms);
 }
@@ -46,17 +46,17 @@ static void nm_sleep_ms(uint32_t ms)
 
 typedef pthread_t nm_thread;
 
-static int nm_thread_start(nm_thread *t, void *(*fn)(void *), void *arg)
+static inline int nm_thread_start(nm_thread *t, void *(*fn)(void *), void *arg)
 {
     return pthread_create(t, NULL, fn, arg) == 0 ? 0 : -1;
 }
 
-static void nm_thread_join(nm_thread t)
+static inline void nm_thread_join(nm_thread t)
 {
     pthread_join(t, NULL);
 }
 
-static void nm_sleep_ms(uint32_t ms)
+static inline void nm_sleep_ms(uint32_t ms)
 {
     struct timespec ts;
     ts.tv_sec  = (time_t)(ms / 1000u);

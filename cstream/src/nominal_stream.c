@@ -23,6 +23,10 @@
 
 #include <stdlib.h>
 #include <string.h>
+#if !defined(_WIN32)
+#include <time.h>   /* clock_gettime; arrives transitively via nm_thread.h, but
+                     * relying on another header's includes is how builds break */
+#endif
 
 /* Bounds one request. Large enough that batching is effective, small enough that a
  * single failure loses a modest amount of data and a single encode stays quick. */
