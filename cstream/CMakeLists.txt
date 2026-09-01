@@ -7,11 +7,22 @@ add_library(nominalstream
   src/nm_http.c
 )
 
-# libcurl carries the HTTPS. Official QNX builds exist (curl.se/qnx ships 8.17.0 for
-# SDP 7.1) and OpenSSL ships with Neutrino, which is what makes the QNX target
-# tractable without any Rust toolchain.
+# libcurl carries the HTTPS.
+#
+# Supply it deliberately rather than by accident: configure with the vcpkg toolchain
+# (see README) so this resolves to a curl we chose. Without one, CMake may find
+# whatever happens to be installed -- on this dev machine that was GStreamer's bundled
+# copy, which is not something to ship against.
+#
+# Consuming curl through its CMake config matters for static builds: the imported
+# target carries INTERFACE_COMPILE_DEFINITIONS "CURL_STATICLIB", so the define curl's
+# INSTALL.md warns about is propagated for us rather than needing to be set by hand.
+#
+# On QNX and Antelope this finds the platform's curl instead, which is the whole reason
+# the C design is tractable there -- curl.se publishes official QNX builds and OpenSSL
+# ships with Neutrino.
 find_package(CURL REQUIRED)
-target_link_libraries(nominalstream PRIVATE CURL::libcurl)
+target_link_libraries(nominalstream PUBLIC CURL::libcurl)
 
 target_include_directories(nominalstream
   PUBLIC  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -46,7 +57,6 @@ target_link_libraries(nmstream-demo PRIVATE nominalstream)
 if(NOT WIN32)
   target_link_libraries(nmstream-demo PRIVATE m)
 endif()
-
 if(BUILD_TESTING)
   add_executable(test_encode tests/test_encode.c)
   target_link_libraries(test_encode PRIVATE nominalstream)
@@ -61,7 +71,5 @@ if(BUILD_TESTING)
   add_test(NAME ring COMMAND test_ring)
 endif()
 
-# TODO, in order:
-#   - ring buffer and sender thread
-#   - libcurl for HTTP (official QNX builds exist; OpenSSL ships with Neutrino)
-#   - optional libzstd, gated on NM_USE_ZSTD (server accepts identity, so off by default)
+# Next: the Simulink S-function, in a sibling simulink/ directory, then the QNX and
+# Antelope cross-compiles.

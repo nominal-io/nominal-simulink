@@ -72,7 +72,17 @@ int main(int argc, char **argv)
     cfg.channel_count      = CHANNELS;
     cfg.capacity_rows      = 4096;
     cfg.max_batch_delay_ms = 100;
-    cfg.ca_bundle_path     = NULL;
+
+    /* NULL means the platform's own trust source, which on this Windows build is
+     * Schannel and the Windows certificate store. An RTOS has no such store, so
+     * NOMINAL_CA_BUNDLE exists for the targets, where an explicit bundle is the only
+     * option. */
+    cfg.ca_bundle_path = getenv("NOMINAL_CA_BUNDLE");
+    if (cfg.ca_bundle_path != NULL && cfg.ca_bundle_path[0] == '\0') {
+        cfg.ca_bundle_path = NULL;
+    }
+    printf("CA bundle     = %s\n",
+           cfg.ca_bundle_path ? cfg.ca_bundle_path : "(platform trust store)");
 
     printf("opening stream to %s\n", rid);
     s = nm_open(&cfg, &status);
