@@ -22,3 +22,4 @@ option(BUILD_SHARED_LIBS "Build shared instead of static" OFF)
 include(CTest)
 
 add_subdirectory(cstream)
+add_subdirectory(simulink)

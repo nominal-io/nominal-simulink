@@ -296,6 +296,11 @@ void nm_stats(const nm_stream *s, nm_stats_t *out)
     memcpy(out->last_error, s->last_error, sizeof out->last_error);
 }
 
+uint64_t nm_dropped_rows(const nm_stream *s)
+{
+    return s != NULL ? s->rows_dropped : 0;
+}
+
 void nm_close(nm_stream *s)
 {
     if (s == NULL) {

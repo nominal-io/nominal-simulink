@@ -14,6 +14,11 @@ vcpkg  := replace(env_var_or_default("VCPKG_ROOT", "C:/tools/vcpkg"), "\\", "/")
 # are going, since Simulink Real-Time packs .a libraries into the application itself.
 triplet := env_var_or_default("VCPKG_TRIPLET", "x64-windows-static-md")
 
+# MATLAB is often not on PATH. Override with the install root, forward slashes only:
+#   just matlabroot='C:/Program Files/MATLAB/R2025b' build
+matlabroot := env_var_or_default("MATLABROOT", "C:/Program Files/MATLAB/R2026a")
+matlab     := matlabroot + "/bin/matlab.exe"
+
 config  := "Release"
 builddir := "build"
 
@@ -24,7 +29,8 @@ default: test
 configure:
     cmake -S . -B {{builddir}} \
       -DCMAKE_TOOLCHAIN_FILE={{vcpkg}}/scripts/buildsystems/vcpkg.cmake \
-      -DVCPKG_TARGET_TRIPLET={{triplet}}
+      -DVCPKG_TARGET_TRIPLET={{triplet}} \
+      -DMatlab_ROOT_DIR="{{matlabroot}}"
 
 # Build the library, demo and tests
 build: configure
@@ -51,9 +57,17 @@ demo rid base="": build
 fixtures:
     cd tools/fixturegen && cargo run --release
 
-# Delete the build tree
+# Regenerate the Simulink library holding the masked sink block
+library: build
+    "{{matlab}}" -batch "cd simulink; make_library"
+
+# Load the block and step a model without touching the network
+sim-test: build
+    "{{matlab}}" -batch "cd simulink; addpath(pwd, fullfile(pwd,'blocks'), fullfile(pwd,'tests')); blocksmoke"
+
+# Delete the build tree and the built block
 clean:
-    rm -rf {{builddir}}
+    rm -rf {{builddir}} simulink/blocks
 
 # Show what is available
 help:

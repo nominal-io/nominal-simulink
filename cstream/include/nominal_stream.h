@@ -114,11 +114,20 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status);
 int nm_push(nm_stream *s, int64_t timestamp_nanos, const double *values, size_t count);
 
 /*
- * Copy out the current counters. Cheap and lock-free; safe to call from the same
- * real-time context as nm_push, which is the point — a model can route rows_dropped to
- * a block output and make loss visible instead of silent.
+ * Copy out the current counters. Lock-free, but it copies the whole struct including
+ * last_error, so prefer nm_dropped_rows on a per-step path — see below.
  */
 void nm_stats(const nm_stream *s, nm_stats_t *out);
+
+/*
+ * Just the discarded-row count.
+ *
+ * Exists because a Simulink block wants this every step to drive an output port, and
+ * nm_stats would memcpy a 256-byte error string each time to deliver one number. At
+ * 1 kHz that is a quarter of a megabyte per second of pointless copying on precisely
+ * the path this library promises to keep cheap.
+ */
+uint64_t nm_dropped_rows(const nm_stream *s);
 
 /*
  * Flush what is buffered, stop the sender thread, and release everything.
