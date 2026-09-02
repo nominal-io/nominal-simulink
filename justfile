@@ -57,6 +57,13 @@ demo rid base="": build
 fixtures:
     cd tools/fixturegen && cargo run --release
 
+# Pins the MATLAB and Go frame decoders against the C encoder, so three independent
+# codec implementations agree by construction rather than by inspection.
+#
+# Regenerate the golden host-to-proxy frames
+frames: build
+    {{builddir}}/cstream/{{config}}/test_frame.exe --fixtures
+
 # Regenerate the Simulink library holding the masked sink block
 library: build
     "{{matlab}}" -batch "cd simulink; make_library"

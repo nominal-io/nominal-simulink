@@ -1,0 +1,35 @@
+# Golden host-to-proxy frames
+#
+# Produced by `test_frame --fixtures`. Every proxy implementation — the C receiver, the
+# MATLAB reference, the Go daemon — decodes these and must agree on the values below.
+# Three independent codecs is a maintenance cost worth paying only if they are pinned
+# to a shared artifact, so this file is that artifact. Hex rather than binary so a
+# change is reviewable in a diff.
+#
+# Regenerate with:  just frames
+#
+# INPUT
+#   dataset RID   ri.catalog.test.dataset.abc
+#   channels      engine.rpm, engine.egt, engine.psi
+#   session_id    0x1122334455667788
+#   config_id     0xb603701bebd9a025   (FNV-1a over length-prefixed RID and names)
+#   sequence      42
+#   rows          ts=1000000000  1500.0    700.0   30.0
+#                 ts=1000001000  1510.5    701.5   30.1
+#                 ts=1000002000  1521.25   703.0   30.2
+#
+# A decoder that reproduces exactly those values from the bytes below is conformant.
+
+config_id b603701bebd9a025
+
+# HELLO, 91 bytes
+# 31534d4e magic ("NMS1" LE) | 01 version | 01 type=HELLO | 0000 reserved
+# 8877665544332211 session | 25a0d9eb1b7003b6 config
+# 1b00 rid_len=27 | rid | 0300 channel_count=3 | (0a00 len + name) x3
+hello 31534d4e01010000887766554433221125a0d9eb1b7003b61b0072692e636174616c6f672e746573742e646174617365742e61626303000a00656e67696e652e72706d0a00656e67696e652e6567740a00656e67696e652e707369
+
+# DATA, 132 bytes
+# header as above with type=02 | 2a00000000000000 sequence=42
+# 0300 channel_count=3 | 0300 row_count=3
+# then per row: 8-byte int64 timestamp, then channel_count 8-byte LE float64 values
+data 31534d4e01020000887766554433221125a0d9eb1b7003b62a000000000000000300030000ca9a3b0000000000000000007097400000000000e085400000000000003e40e8cd9a3b0000000000000000009a97400000000000ec85409a99999999193e40d0d19a3b000000000000000000c597400000000000f885403333333333333e40

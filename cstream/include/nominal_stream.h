@@ -46,11 +46,40 @@ typedef enum {
 
 typedef struct nm_stream nm_stream;
 
+/*
+ * How the data leaves this machine.
+ *
+ * DIRECT is the default: this process talks HTTPS to Nominal itself. Simple to deploy,
+ * nothing else to run — but the sender thread pays for protobuf, TLS and HTTP here.
+ *
+ * PROXY sends compact datagrams to a relay elsewhere, which does that work instead.
+ * The host is left doing little more than a sendto, which is what makes telemetry
+ * affordable on a machine that is already at its performance limit. It also means no
+ * credential lives on this machine: the dataset RID travels, the token does not.
+ *
+ * The choice affects only the sink. The ring, the sender thread, timestamps and the
+ * Simulink block are identical either way.
+ */
+typedef enum {
+    NM_MODE_DIRECT = 0,
+    NM_MODE_PROXY  = 1
+} nm_mode;
+
 typedef struct {
-    /* Where to write. base_url is the API root, e.g.
-     * "https://api.gov.nominal.io/api"; dataset_rid is an existing dataset. */
+    nm_mode mode;
+
+    /* DIRECT only. base_url is the API root, e.g. "https://api.gov.nominal.io/api". */
     const char *base_url;
     const char *token;
+
+    /* PROXY only. An address and port the relay is listening on. Prefer a private
+     * segment: frames are not authenticated, so anything that can reach this port can
+     * write to the datasets the relay serves. */
+    const char *proxy_host;
+    uint16_t    proxy_port;
+
+    /* Both modes. In PROXY mode this travels in the HELLO frame so the relay knows
+     * where to write, which is why the host needs no token. */
     const char *dataset_rid;
 
     /* The channels this stream writes, in the order values are supplied to nm_push.

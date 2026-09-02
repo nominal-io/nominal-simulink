@@ -5,7 +5,16 @@ add_library(nominalstream
   src/nm_encode.c
   src/nm_ring.c
   src/nm_http.c
+  # Proxy mode. nm_frame is its own translation unit so a static link into a real-time
+  # application drops the decoder as dead code -- a target only ever sends frames.
+  src/nm_frame.c
+  src/nm_udp.c
 )
+
+if(WIN32)
+  # getaddrinfo and the socket calls in nm_udp.c
+  target_link_libraries(nominalstream PUBLIC ws2_32)
+endif()
 
 # libcurl carries the HTTPS.
 #
@@ -69,6 +78,11 @@ if(BUILD_TESTING)
   target_link_libraries(test_ring PRIVATE nominalstream)
   target_include_directories(test_ring PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME ring COMMAND test_ring)
+
+  add_executable(test_frame tests/test_frame.c)
+  target_link_libraries(test_frame PRIVATE nominalstream)
+  target_include_directories(test_frame PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  add_test(NAME frame COMMAND test_frame)
 endif()
 
 # Next: the Simulink S-function, in a sibling simulink/ directory, then the QNX and
