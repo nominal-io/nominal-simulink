@@ -33,14 +33,10 @@
  * misaligning columns, which is the failure mode that would otherwise produce
  * plausible-looking wrong data.
  *
- * Everything is little-endian, which is not a portability claim but a choice: both
- * target architectures are x86-64, and fixing the byte order means a third-party
- * implementation has no negotiation to get wrong. Encoders must write LE explicitly
- * rather than memcpy a struct.
+ * Everything is little-endian. Encoders must write LE explicitly rather than memcpy a struct.
  *
  * Frames carry no authentication. Anyone who can reach the proxy's port can write to
- * any dataset it serves. That is a documented trusted-network assumption, not an
- * oversight; per-frame HMAC is the hardening path if a deployment needs it.
+ * any dataset it serves. 
  */
 
 #ifndef NM_FRAME_H
@@ -57,8 +53,33 @@
  * datagrams. */
 #define NM_FRAME_MAX_BYTES 1400
 
-/* Bounds a third-party decoder can rely on, so it can size buffers statically. */
-#define NM_FRAME_MAX_CHANNELS   512
+/* Size of the common header, laid out in full further down. Defined here because the
+ * channel bound is derived from it. */
+#define NM_FRAME_HEADER_BYTES 24
+
+/* Bytes of DATA body before the rows begin: sequence(8) + channel_count(2) +
+ * row_count(2). In the header rather than the implementation so the channel bound
+ * below is derivable from the spec alone. */
+#define NM_FRAME_DATA_FIXED_BYTES 12
+
+/*
+ * The most channels a DATA frame can carry, derived rather than chosen so it cannot
+ * drift from the MTU. One row is 8 bytes of timestamp plus 8 per channel, and it has
+ * to fit alongside the header and the fixed DATA fields:
+ *
+ *   8*nch <= NM_FRAME_MAX_BYTES - HEADER - DATA_FIXED - 8   ->  nch <= 169
+ *
+ * A third-party decoder can size its buffers from this and never see a larger frame.
+ *
+ * HELLO's practical limit is lower and depends on name lengths, so it is enforced
+ * dynamically by nm_frame_encode_hello rather than by a constant: ~110 channels with
+ * ten-character names. Both encoders refuse rather than truncate.
+ */
+#define NM_FRAME_MAX_CHANNELS \
+    (((NM_FRAME_MAX_BYTES - NM_FRAME_HEADER_BYTES - NM_FRAME_DATA_FIXED_BYTES - 8u) / 8u))
+
+/* Per-field sanity limits. The frame size bounds the totals; these only stop a single
+ * absurd name or RID. */
 #define NM_FRAME_MAX_NAME_BYTES 256
 #define NM_FRAME_MAX_RID_BYTES  256
 
@@ -79,7 +100,6 @@ typedef enum {
  *   8      8    session_id  random per stream; distinguishes concurrent models
  *   16     8    config_id   hash of the channel list and RID
  */
-#define NM_FRAME_HEADER_BYTES 24
 
 typedef struct {
     uint8_t  version;

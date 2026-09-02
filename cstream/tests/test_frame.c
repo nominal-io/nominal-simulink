@@ -39,6 +39,37 @@ static void put_row_count_ff(uint8_t *buf)
     buf[NM_FRAME_HEADER_BYTES + 11] = 0xFF;
 }
 
+/*
+ * config_id must be real FNV-1a, not merely a working hash.
+ *
+ * A transcription error in the offset basis once left it deterministic and
+ * well-distributed but not FNV-1a — which is invisible to a round-trip test and only
+ * shows up when a second implementation uses the published constant, computes a
+ * different id, and has every frame rejected as an unknown config. So pin the
+ * algorithm to its canonical vector rather than only checking self-consistency.
+ *
+ * FNV-1a/64 of the single byte 'a' is 0xaf63dc4c8601ec8c. Reproduced here by hashing a
+ * one-character name with no RID, so the field framing is exercised too.
+ */
+static void test_fnv1a_matches_the_spec(void)
+{
+    /* An empty RID plus the single name "a" hashes the byte sequence
+     *   00 00 00 00   (len 0, the RID)
+     *   01 00 00 00   (len 1, the name)
+     *   61            ('a')
+     * Expected value computed independently from the published FNV-1a algorithm, not
+     * captured from this implementation -- capturing our own output would have happily
+     * blessed the broken constant. */
+    static const char *const one[] = { "a" };
+    uint64_t got = nm_frame_config_id("", one, 1);
+
+    check(got == 0xd955c00fa740f76fULL, "config_id is genuine FNV-1a");
+    if (got != 0xd955c00fa740f76fULL) {
+        printf("      got 0x%016llx, want 0xd955c00fa740f76f\n",
+               (unsigned long long)got);
+    }
+}
+
 static void test_config_id_is_stable(void)
 {
     uint64_t a = nm_frame_config_id(RID, NAMES, NCH);
@@ -173,6 +204,37 @@ static void test_data_respects_mtu(void)
     }
 }
 
+/*
+ * The channel bound must be reachable and not exceedable. NM_FRAME_MAX_CHANNELS was
+ * originally a round number picked by hand, which turned out to be three times what
+ * the MTU actually allows — unreachable, and an 8 KB decode struct for nothing. It is
+ * now derived from NM_FRAME_MAX_BYTES, so this checks the derivation rather than
+ * trusting it.
+ */
+static void test_channel_bound_is_consistent(void)
+{
+    check(nm_frame_rows_per_datagram(NM_FRAME_MAX_CHANNELS) >= 1,
+          "one row at NM_FRAME_MAX_CHANNELS fits a datagram");
+    check(nm_frame_rows_per_datagram(NM_FRAME_MAX_CHANNELS + 1) == 0,
+          "one more channel than the maximum does not fit");
+
+    /* Encoding at the limit must actually work, not just be arithmetically possible. */
+    {
+        static int64_t ts[1];
+        static double  vals[NM_FRAME_MAX_CHANNELS];
+        static uint8_t buf[NM_FRAME_MAX_BYTES];
+        size_t rows = 0, n;
+
+        n = nm_frame_encode_data(buf, sizeof buf, 1, 1, 0, ts, 1,
+                                 vals, NM_FRAME_MAX_CHANNELS, &rows);
+        check(n > 0 && n <= NM_FRAME_MAX_BYTES && rows == 1,
+              "a full-width row encodes within the MTU");
+    }
+
+    printf("      (NM_FRAME_MAX_CHANNELS = %u, %zu rows/datagram at 3 channels)\n",
+           (unsigned)NM_FRAME_MAX_CHANNELS, nm_frame_rows_per_datagram(3));
+}
+
 static void test_rejects_malformed(void)
 {
     uint8_t         buf[NM_FRAME_MAX_BYTES];
@@ -286,6 +348,8 @@ static void print_fixtures(void)
 
 int main(int argc, char **argv)
 {
+    test_fnv1a_matches_the_spec();
+    test_channel_bound_is_consistent();
     test_config_id_is_stable();
     test_hello_roundtrip();
     test_data_roundtrip();

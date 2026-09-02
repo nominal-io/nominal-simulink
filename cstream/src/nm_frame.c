@@ -75,7 +75,7 @@ static double get_f64(const uint8_t *p)
 /* ------------------------------------------------------------------- sizing */
 
 #define ROW_BYTES(nch) (8u + 8u * (unsigned)(nch))
-#define DATA_BODY_FIXED 12u   /* sequence(8) + channel_count(2) + row_count(2) */
+#define DATA_BODY_FIXED ((unsigned)NM_FRAME_DATA_FIXED_BYTES)
 
 size_t nm_frame_rows_per_datagram(size_t channel_count)
 {
@@ -94,14 +94,32 @@ size_t nm_frame_rows_per_datagram(size_t channel_count)
 
 /* --------------------------------------------------------------- config_id
  *
- * FNV-1a, chosen because it is short enough to reimplement correctly from the spec in
- * any language — which is the point, since every proxy implementation must agree with
- * the host on this value. Each field is length-prefixed so that {"ab","c"} and
- * {"a","bc"} cannot collide.
+ * FNV-1a (Fowler-Noll-Vo, variant 1a): a non-cryptographic hash that is two constants
+ * and two operations per byte —
+ *
+ *     h = offset_basis
+ *     for each byte b:  h ^= b;  h *= prime      (wrapping at 64 bits)
+ *
+ * The 1a variant XORs before multiplying, where FNV-1 does the reverse; 1a distributes
+ * better, so it is the one in general use. Chosen here because every proxy
+ * implementation must compute an identical config_id, and this is short enough to
+ * reimplement from the spec in any language without getting it subtly wrong. Go's
+ * standard library has it as hash/fnv.
+ *
+ * It is not collision-resistant against an adversary, and does not need to be:
+ * config_id only has to distinguish one configuration from another. Frames are
+ * unauthenticated anyway, so it is not a security boundary.
+ *
+ * Constants in hex, matching the published spec. They were originally transcribed as
+ * decimal and the offset basis lost a digit — a hash that still worked, but was not
+ * FNV-1a, so an implementation using the real constant would have computed a different
+ * config_id and had every frame silently rejected.
+ *
+ * Each field is length-prefixed so {"ab","c"} and {"a","bc"} cannot collide.
  */
 
-#define FNV_OFFSET 1469598103934665603ULL
-#define FNV_PRIME  1099511628211ULL
+#define FNV_OFFSET 0xcbf29ce484222325ULL   /* 14695981039346656037 */
+#define FNV_PRIME  0x00000100000001b3ULL   /* 1099511628211 */
 
 static uint64_t fnv1a(uint64_t h, const void *data, size_t len)
 {
