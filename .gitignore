@@ -43,7 +43,7 @@
 *.pdb
 
 # Kernel Module Compile Results
-*.mod*
+# (*.mod* removed: no kernel modules here, and it silently matched go.mod)
 *.cmd
 .tmp_versions/
 modules.order
@@ -71,3 +71,7 @@ build-linux/
 
 # Third-party SDKs, fetched locally rather than committed
 ext/
+
+# Real proxy config holds a token; only the template is committed
+nmproxy/nmproxy.yaml
+nmproxy.yaml

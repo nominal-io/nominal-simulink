@@ -1,0 +1,7 @@
+# Dry-run config for the end-to-end check: decode frames and report, write nothing.
+# Needs no token and no allowlist, which is the point.
+listen: "127.0.0.1:15400"
+dry_run: true
+log_level: "info"
+stats_interval: 1s
+idle_timeout: 30s

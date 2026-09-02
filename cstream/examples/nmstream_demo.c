@@ -45,8 +45,37 @@ int main(int argc, char **argv)
     };
 
     const char *token = getenv("NOMINAL_TOKEN");
-    const char *rid   = (argc > 1) ? argv[1] : NULL;
-    const char *base  = (argc > 2) ? argv[2] : "https://api.gov.nominal.io/api";
+    const char *rid   = NULL;
+    const char *base  = "https://api.gov.nominal.io/api";
+
+    /* -p host:port switches to proxy mode, where this process sends datagrams and a
+     * relay does the protobuf, TLS and HTTP. No token is needed: the dataset RID
+     * travels in the frames and the credential stays on the relay. */
+    const char *proxy_host = NULL;
+    uint16_t    proxy_port = 0;
+    int         argi = 1;
+
+    if (argc > 2 && strcmp(argv[1], "-p") == 0) {
+        static char hostbuf[256];
+        const char *colon = strrchr(argv[2], ':');
+
+        if (colon == NULL || (size_t)(colon - argv[2]) >= sizeof hostbuf) {
+            fprintf(stderr, "-p wants host:port, e.g. -p 127.0.0.1:15400\n");
+            return 2;
+        }
+        memcpy(hostbuf, argv[2], (size_t)(colon - argv[2]));
+        hostbuf[colon - argv[2]] = '\0';
+        proxy_host = hostbuf;
+        proxy_port = (uint16_t)atoi(colon + 1);
+        argi = 3;
+    }
+
+    if (argc > argi) {
+        rid = argv[argi];
+    }
+    if (argc > argi + 1) {
+        base = argv[argi + 1];
+    }
 
     nm_config  cfg;
     nm_status  status;
@@ -55,23 +84,36 @@ int main(int argc, char **argv)
     int64_t    t0;
     int        i, dropped = 0;
 
-    if (token == NULL || token[0] == '\0') {
-        fprintf(stderr, "set NOMINAL_TOKEN in the environment\n");
+    if (rid == NULL) {
+        fprintf(stderr,
+                "usage: nmstream-demo [-p host:port] <dataset-rid> [base-url]\n"
+                "  no -p   direct HTTPS to Nominal; needs NOMINAL_TOKEN\n"
+                "  -p      send frames to a relay instead; no token needed\n");
         return 2;
     }
-    if (rid == NULL) {
-        fprintf(stderr, "usage: nmstream-demo <dataset-rid> [base-url]\n");
+    if (proxy_host == NULL && (token == NULL || token[0] == '\0')) {
+        fprintf(stderr, "direct mode needs NOMINAL_TOKEN in the environment\n");
         return 2;
     }
 
     memset(&cfg, 0, sizeof cfg);
-    cfg.base_url           = base;
-    cfg.token              = token;
     cfg.dataset_rid        = rid;
     cfg.channel_names      = names;
     cfg.channel_count      = CHANNELS;
     cfg.capacity_rows      = 4096;
     cfg.max_batch_delay_ms = 100;
+
+    if (proxy_host != NULL) {
+        cfg.mode       = NM_MODE_PROXY;
+        cfg.proxy_host = proxy_host;
+        cfg.proxy_port = proxy_port;
+        printf("mode          = proxy -> %s:%u\n", proxy_host, (unsigned)proxy_port);
+    } else {
+        cfg.mode     = NM_MODE_DIRECT;
+        cfg.base_url = base;
+        cfg.token    = token;
+        printf("mode          = direct -> %s\n", base);
+    }
 
     /* NULL means the platform's own trust source, which on this Windows build is
      * Schannel and the Windows certificate store. An RTOS has no such store, so

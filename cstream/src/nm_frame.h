@@ -109,29 +109,62 @@ typedef struct {
 } nm_frame_header;
 
 /*
- * HELLO body, following the header:
+ * GRAMMAR
  *
- *   2    rid_len            bytes of RID that follow
- *   ...  rid                not NUL-terminated
- *   2    channel_count
- *   for each channel:
- *     2  name_len
- *     .. name               not NUL-terminated
+ * In ABNF (RFC 5234), which unlike plain BNF can express fixed octet counts. `nOCTET`
+ * means exactly n octets; `%xNN` is a literal octet.
  *
- * A channel list too large for one datagram is a configuration we reject at open rather
- * than splitting HELLO across frames — partial channel maps are a subtle source of
- * misaligned data, and 1400 bytes holds a lot of names.
- */
-
-/*
- * DATA body, following the header:
+ *   frame         = hello-frame / data-frame
  *
- *   8    sequence           per-session, monotonic; gaps are loss
- *   2    channel_count      must match the HELLO for this config_id
- *   2    row_count
- *   for each row:
- *     8  timestamp_nanos    int64, Unix epoch
- *     .. values             float64 * channel_count
+ *   hello-frame   = magic version %x01 reserved session-id config-id hello-body
+ *   data-frame    = magic version %x02 reserved session-id config-id data-body
+ *
+ *   magic         = %x31.53.4D.4E   ; NM_FRAME_MAGIC as a little-endian uint32
+ *   version       = OCTET           ; NM_FRAME_VERSION; a decoder rejects others
+ *   reserved      = 2OCTET          ; zero
+ *   session-id    = u64             ; distinguishes concurrent models
+ *   config-id     = u64             ; hash of the RID and channel names
+ *
+ *   hello-body    = rid channel-count *channel-name
+ *   rid           = length *OCTET   ; not NUL-terminated
+ *   channel-name  = length *OCTET   ; not NUL-terminated
+ *
+ *   data-body     = sequence channel-count row-count *row
+ *   sequence      = u64             ; per-session, monotonic; gaps are loss
+ *   row-count     = u16
+ *   row           = timestamp *value
+ *   timestamp     = i64             ; nanoseconds, Unix epoch
+ *   value         = f64
+ *
+ *   channel-count = u16
+ *   length        = u16
+ *   u16           = 2OCTET          ; little-endian
+ *   u64           = 8OCTET          ; little-endian
+ *   i64           = 8OCTET          ; little-endian, two's complement
+ *   f64           = 8OCTET          ; little-endian IEEE 754 binary64
+ *
+ * CONSTRAINTS NOT EXPRESSIBLE IN THE GRAMMAR
+ *
+ * The `*` repetitions above are unbounded, but each is really governed by a field
+ * earlier in the same frame. That is a context-sensitive dependency, so no context-free
+ * grammar can state it:
+ *
+ *   1. hello-body contains exactly channel-count occurrences of channel-name.
+ *   2. data-body contains exactly row-count occurrences of row.
+ *   3. each row contains exactly channel-count occurrences of value.
+ *   4. channel-count in a data-frame must equal the channel-count of the hello-frame
+ *      bearing the same config-id.
+ *   5. no frame exceeds NM_FRAME_MAX_BYTES, and channel-count <= NM_FRAME_MAX_CHANNELS.
+ *
+ * This is precisely why a decoder must check every length against the bytes actually
+ * received rather than trusting the grammar: a frame can be perfectly well-formed
+ * against the productions above and still claim more rows than it carries. Those length
+ * fields are the obvious way to walk a decoder off the end of a buffer, which is what
+ * the truncation tests in tests/test_frame.c exist to prevent.
+ *
+ * A channel list too large for one datagram is rejected at open rather than split
+ * across frames — a partial channel map is a subtle source of misaligned data, and
+ * 1400 bytes holds a lot of names.
  */
 
 /* Rows that fit one datagram, given a channel count. Zero if a single row cannot. */

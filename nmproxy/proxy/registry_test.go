@@ -1,0 +1,308 @@
+package proxy
+
+import (
+	"bufio"
+	"encoding/binary"
+	"encoding/hex"
+	"io"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/nominal-io/nominal-simulink/nmproxy/frame"
+)
+
+// Frames come from the C encoder's fixtures rather than a Go encoder, because the proxy
+// never encodes — building an encoder here purely for tests would be a third
+// implementation to keep correct for no benefit. Where a test needs a different
+// sequence number it rewrites those eight bytes in place.
+const fixturePath = "../../cstream/tests/fixtures/frames.txt"
+
+const fixtureRID = "ri.catalog.test.dataset.abc"
+
+func loadFixture(t *testing.T, key string) []byte {
+	t.Helper()
+
+	f, err := os.Open(filepath.FromSlash(fixturePath))
+	if err != nil {
+		t.Fatalf("cannot open %s: %v", fixturePath, err)
+	}
+	defer f.Close()
+
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		parts := strings.Fields(strings.TrimSpace(sc.Text()))
+		if len(parts) == 2 && parts[0] == key {
+			raw, err := hex.DecodeString(parts[1])
+			if err != nil {
+				t.Fatalf("fixture %q is not hex: %v", key, err)
+			}
+			return raw
+		}
+	}
+	t.Fatalf("no %q fixture in %s", key, fixturePath)
+	return nil
+}
+
+// withSequence returns a copy of a DATA frame carrying a different sequence number.
+// The field sits immediately after the header, per the ABNF in nm_frame.h.
+func withSequence(data []byte, seq uint64) []byte {
+	out := make([]byte, len(data))
+	copy(out, data)
+	binary.LittleEndian.PutUint64(out[frame.HeaderBytes:frame.HeaderBytes+8], seq)
+	return out
+}
+
+func quietLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+func newTestRegistry(t *testing.T, cfg Config) (*Registry, *LogWriter) {
+	t.Helper()
+	w := &LogWriter{Log: quietLogger()}
+	if cfg.IdleTimeout == 0 {
+		cfg.IdleTimeout = time.Minute
+	}
+	return NewRegistry(w, cfg, quietLogger()), w
+}
+
+func TestHelloThenDataWrites(t *testing.T) {
+	r, w := newTestRegistry(t, Config{})
+	now := time.Now()
+
+	r.Handle(loadFixture(t, "hello"), now)
+	r.Handle(loadFixture(t, "data"), now)
+
+	if got := w.Rows(); got != 3 {
+		t.Errorf("wrote %d rows, want 3", got)
+	}
+	if st := r.Stats(); st.Configs != 1 || st.Sessions != 1 {
+		t.Errorf("configs=%d sessions=%d, want 1 and 1", st.Configs, st.Sessions)
+	}
+}
+
+// Data arriving before its HELLO is the normal state of affairs after a proxy restart,
+// so it must be counted and shrugged off rather than treated as an error.
+func TestDataBeforeHelloIsDroppedNotFatal(t *testing.T) {
+	r, w := newTestRegistry(t, Config{})
+	now := time.Now()
+
+	r.Handle(loadFixture(t, "data"), now)
+
+	if got := w.Rows(); got != 0 {
+		t.Errorf("wrote %d rows before any HELLO, want 0", got)
+	}
+	st := r.Stats()
+	if st.UnknownConfig != 1 {
+		t.Errorf("unknown_config=%d, want 1", st.UnknownConfig)
+	}
+	if st.BadFrames != 0 {
+		t.Errorf("bad_frames=%d — an unknown config is not a malformed frame", st.BadFrames)
+	}
+
+	// And once the HELLO lands, the following data flows.
+	r.Handle(loadFixture(t, "hello"), now)
+	r.Handle(loadFixture(t, "data"), now)
+	if got := w.Rows(); got != 3 {
+		t.Errorf("wrote %d rows after the HELLO, want 3", got)
+	}
+}
+
+// Sequence gaps are the only visibility into loss, since the host cannot know a
+// datagram vanished. Getting the arithmetic wrong would either hide loss or invent it.
+func TestSequenceGapsAndReordering(t *testing.T) {
+	data := loadFixture(t, "data")
+
+	cases := []struct {
+		name         string
+		sequences    []uint64
+		wantGaps     uint64
+		wantReorders uint64
+	}{
+		{
+			name:      "contiguous",
+			sequences: []uint64{0, 1, 2, 3},
+		},
+		{
+			// The first sequence seen sets the baseline. A proxy that starts mid-run
+			// must not report every frame before it as lost.
+			name:      "starting mid-run is not loss",
+			sequences: []uint64{5000, 5001, 5002},
+		},
+		{
+			name:      "one missing frame",
+			sequences: []uint64{0, 1, 3, 4},
+			wantGaps:  1,
+		},
+		{
+			// Counting the difference rather than incrementing by one is what makes
+			// the number meaningful when a burst is lost.
+			name:      "a burst of loss counts every frame",
+			sequences: []uint64{0, 100},
+			wantGaps:  99,
+		},
+		{
+			// UDP may reorder. The frame arriving late was already counted as a gap
+			// when its successor arrived, so counting it again would double-count.
+			name:         "reordering is not loss",
+			sequences:    []uint64{0, 2, 1, 3},
+			wantGaps:     1,
+			wantReorders: 1,
+		},
+		{
+			name:         "a duplicate is a reorder, not a gap",
+			sequences:    []uint64{0, 1, 1, 2},
+			wantReorders: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := newTestRegistry(t, Config{})
+			now := time.Now()
+			r.Handle(loadFixture(t, "hello"), now)
+
+			for _, seq := range tc.sequences {
+				r.Handle(withSequence(data, seq), now)
+			}
+
+			st := r.Stats()
+			if st.Gaps != tc.wantGaps {
+				t.Errorf("gaps=%d, want %d", st.Gaps, tc.wantGaps)
+			}
+			if st.Reorders != tc.wantReorders {
+				t.Errorf("reorders=%d, want %d", st.Reorders, tc.wantReorders)
+			}
+			// Every frame carries rows regardless of ordering: a reordered frame's
+			// data is still good, and dropping it would turn a harmless network
+			// artifact into real loss.
+			if wantRows := len(tc.sequences) * 3; int(st.Rows) != wantRows {
+				t.Errorf("rows=%d, want %d", st.Rows, wantRows)
+			}
+		})
+	}
+}
+
+func TestAllowlistRefusesUnlistedDatasets(t *testing.T) {
+	r, w := newTestRegistry(t, Config{
+		AllowedDatasets: []string{"ri.catalog.test.dataset.something-else"},
+	})
+	now := time.Now()
+
+	r.Handle(loadFixture(t, "hello"), now)
+	r.Handle(loadFixture(t, "data"), now)
+
+	if got := w.Rows(); got != 0 {
+		t.Errorf("wrote %d rows for a dataset not on the allowlist, want 0", got)
+	}
+	if st := r.Stats(); st.Refused != 1 {
+		t.Errorf("refused=%d, want 1", st.Refused)
+	}
+}
+
+func TestAllowlistAdmitsListedDatasets(t *testing.T) {
+	r, w := newTestRegistry(t, Config{AllowedDatasets: []string{fixtureRID}})
+	now := time.Now()
+
+	r.Handle(loadFixture(t, "hello"), now)
+	r.Handle(loadFixture(t, "data"), now)
+
+	if got := w.Rows(); got != 3 {
+		t.Errorf("wrote %d rows, want 3", got)
+	}
+}
+
+// A repeated HELLO is the common case — hosts re-announce about once a second — so it
+// must refresh rather than open a second stream for the same configuration.
+func TestRepeatedHelloDoesNotReopen(t *testing.T) {
+	r, _ := newTestRegistry(t, Config{})
+	now := time.Now()
+	hello := loadFixture(t, "hello")
+
+	for i := 0; i < 10; i++ {
+		r.Handle(hello, now.Add(time.Duration(i)*time.Second))
+	}
+
+	if st := r.Stats(); st.Configs != 1 {
+		t.Errorf("configs=%d after ten HELLOs, want 1", st.Configs)
+	}
+}
+
+func TestSweepEvictsIdleAndFlushes(t *testing.T) {
+	r, _ := newTestRegistry(t, Config{IdleTimeout: 10 * time.Second})
+	start := time.Now()
+
+	r.Handle(loadFixture(t, "hello"), start)
+	r.Handle(loadFixture(t, "data"), start)
+
+	r.Sweep(start.Add(5 * time.Second))
+	if st := r.Stats(); st.Configs != 1 || st.Sessions != 1 {
+		t.Fatalf("swept too early: configs=%d sessions=%d", st.Configs, st.Sessions)
+	}
+
+	r.Sweep(start.Add(30 * time.Second))
+	st := r.Stats()
+	if st.Configs != 0 || st.Sessions != 0 {
+		t.Errorf("configs=%d sessions=%d after the idle timeout, want 0 and 0",
+			st.Configs, st.Sessions)
+	}
+}
+
+// Rubbish on the port must not be able to stop the proxy. Anyone who can reach it can
+// send anything, so every malformed input has to be a counter rather than a panic.
+func TestGarbageIsCountedNotFatal(t *testing.T) {
+	r, w := newTestRegistry(t, Config{})
+	now := time.Now()
+
+	inputs := [][]byte{
+		{},
+		{0x00},
+		make([]byte, frame.HeaderBytes),          // right length, wrong magic
+		[]byte("this is not a frame at all, it"), // plausible length, no structure
+	}
+	for _, in := range inputs {
+		r.Handle(in, now)
+	}
+
+	// A version we do not speak, which must be distinguished from generic garbage so an
+	// operator can see the mismatch.
+	wrongVersion := loadFixture(t, "hello")
+	wrongVersion[4] = 99
+	r.Handle(wrongVersion, now)
+
+	st := r.Stats()
+	if st.WrongVersion != 1 {
+		t.Errorf("wrong_version=%d, want 1", st.WrongVersion)
+	}
+	if st.BadFrames != uint64(len(inputs)) {
+		t.Errorf("bad_frames=%d, want %d", st.BadFrames, len(inputs))
+	}
+	if got := w.Rows(); got != 0 {
+		t.Errorf("garbage produced %d rows", got)
+	}
+}
+
+// A HELLO whose contents do not hash to its claimed config_id means the sender's hash
+// disagrees with ours. Catching it here is what turns a silent total failure — every
+// DATA frame rejected as unknown — into one clear warning.
+func TestHelloWithMismatchedConfigIDIsRejected(t *testing.T) {
+	r, w := newTestRegistry(t, Config{})
+	hello := loadFixture(t, "hello")
+	binary.LittleEndian.PutUint64(hello[16:24], 0xdeadbeefdeadbeef)
+
+	r.Handle(hello, time.Now())
+
+	st := r.Stats()
+	if st.Configs != 0 {
+		t.Errorf("configs=%d, want 0 — a mismatched config_id must not register", st.Configs)
+	}
+	if st.BadFrames != 1 {
+		t.Errorf("bad_frames=%d, want 1", st.BadFrames)
+	}
+	if got := w.Rows(); got != 0 {
+		t.Errorf("wrote %d rows", got)
+	}
+}

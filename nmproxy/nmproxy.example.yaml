@@ -1,0 +1,70 @@
+# nmproxy configuration
+#
+# Copy this to nmproxy.yaml, fill in the token and the datasets you expect, and point
+# the daemon at it:
+#
+#     nmproxy -config /etc/nominal/nmproxy.yaml
+#
+# The file holds an access token, so keep it out of version control and readable only by
+# the account running the daemon (chmod 600). nmproxy warns at startup if it is not.
+#
+# Unknown keys are a startup error rather than being ignored: a typo in a key name would
+# otherwise silently leave that setting at its default, which for allowed_datasets means
+# quietly removing a security control.
+
+
+# UDP address to receive frames on.
+#
+# Bind to a specific interface where you can. Frames carry no authentication, so the
+# listening interface is the primary access control — 0.0.0.0 accepts from anywhere that
+# can route to this machine.
+listen: "0.0.0.0:15400"
+
+
+nominal:
+  # API root. The staging and production hosts differ; a RID from one will not resolve
+  # against the other.
+  base_url: "https://api.gov.nominal.io/api"
+
+  # A Nominal access token. This is the only secret here.
+  #
+  # It lives on the proxy rather than on the Simulink hosts, and that is a deliberate
+  # improvement: a host in proxy mode sends a dataset RID and never holds a credential,
+  # so a machine on a test bench has nothing worth stealing.
+  token: "REPLACE-ME"
+
+
+# Datasets this proxy is permitted to write to.
+#
+# Strongly recommended. Because frames are unauthenticated, anything that can reach the
+# listening port can otherwise write to any dataset the token above permits — and tokens
+# are usually broad. Listing the RIDs you actually expect bounds the damage to datasets
+# you intended. Leave empty only on a trusted, isolated segment; the daemon warns if you
+# do.
+allowed_datasets:
+  # - "ri.catalog.your-env.dataset.00000000-0000-0000-0000-000000000000"
+
+
+# How long a configuration may go unheard before its stream is closed and flushed.
+#
+# Hosts re-announce their channel list about once a second, so anything above a few
+# seconds is safe. The default is generous on purpose: closing early would end a run
+# that is merely paused at a breakpoint.
+idle_timeout: 5m
+
+
+# How often to log a summary of rows written, gaps detected and frames rejected.
+# Set to 0 to disable.
+stats_interval: 30s
+
+
+# debug logs every row, which is a lot at 1 kHz — useful for a few seconds when
+# diagnosing, not for a running deployment.
+log_level: "info"
+
+
+# Decode and report frames without writing anything to Nominal.
+#
+# The quickest way to answer "are frames arriving, and do they decode into sensible
+# values?" without needing a valid token. A dry run needs no token and no allowlist.
+dry_run: false
