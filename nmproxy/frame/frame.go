@@ -13,6 +13,7 @@
 package frame
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -20,10 +21,15 @@ import (
 	"math"
 )
 
+// Magic is checked before anything else is trusted.
+//
+// A byte sequence rather than an integer: written as a little-endian uint32 it would
+// appear as "1SMN" in a packet capture, and being recognisable in tcpdump is a magic
+// number's entire purpose.
+var Magic = [4]byte{'N', 'M', 'S', '1'}
+
 const (
-	// Magic is "NMS1" read as a big-endian word, stored little-endian on the wire.
-	Magic   uint32 = 0x4E4D5331
-	Version uint8  = 1
+	Version uint8 = 1
 
 	// MaxBytes bounds a datagram so IP never fragments it. One lost fragment would
 	// cost the whole frame, which is worse than sending more datagrams.
@@ -118,7 +124,7 @@ func DecodeHeader(buf []byte) (Header, error) {
 	if len(buf) < HeaderBytes {
 		return h, ErrShort
 	}
-	if binary.LittleEndian.Uint32(buf[0:4]) != Magic {
+	if !bytes.Equal(buf[0:4], Magic[:]) {
 		return h, ErrMagic
 	}
 	if buf[4] != Version {

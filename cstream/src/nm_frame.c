@@ -37,16 +37,6 @@ static uint16_t get_u16(const uint8_t *p)
     return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
 }
 
-static uint32_t get_u32(const uint8_t *p)
-{
-    uint32_t v = 0;
-    int      i;
-    for (i = 0; i < 4; i++) {
-        v |= (uint32_t)p[i] << (8 * i);
-    }
-    return v;
-}
-
 static uint64_t get_u64(const uint8_t *p)
 {
     uint64_t v = 0;
@@ -165,7 +155,7 @@ static size_t write_header(uint8_t *buf, size_t buf_len, uint8_t type,
     if (buf_len < NM_FRAME_HEADER_BYTES) {
         return 0;
     }
-    put_u32(buf + 0, NM_FRAME_MAGIC);
+    memcpy(buf, NM_FRAME_MAGIC, NM_FRAME_MAGIC_BYTES);   /* 4 bytes, no NUL */
     buf[4] = NM_FRAME_VERSION;
     buf[5] = type;
     put_u16(buf + 6, 0);
@@ -305,7 +295,7 @@ int nm_frame_decode_header(const uint8_t *buf, size_t len, nm_frame_header *out)
     if (buf == NULL || out == NULL || len < NM_FRAME_HEADER_BYTES) {
         return -1;
     }
-    if (get_u32(buf) != NM_FRAME_MAGIC) {
+    if (memcmp(buf, NM_FRAME_MAGIC, NM_FRAME_MAGIC_BYTES) != 0) {
         return -2;
     }
     if (buf[4] != NM_FRAME_VERSION) {

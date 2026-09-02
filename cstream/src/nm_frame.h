@@ -33,7 +33,16 @@
  * misaligning columns, which is the failure mode that would otherwise produce
  * plausible-looking wrong data.
  *
- * Everything is little-endian. Encoders must write LE explicitly rather than memcpy a struct.
+ * Numeric fields are little-endian, not the big-endian "network byte order" convention.
+ * That convention governs IP/TCP/UDP header fields; a datagram payload is opaque to the
+ * stack, and protobuf, FlatBuffers and Arrow all choose LE for the same reason we do:
+ * both ends here are x86-64, and the payload is mostly IEEE-754 doubles that already
+ * sit in memory little-endian. Big-endian would mean byte-swapping every value — at
+ * 1 kHz across 20 channels, ~160 KB/s of pure swapping on the machine whose lack of
+ * headroom is why proxy mode exists at all. The magic is a byte sequence precisely so
+ * this choice does not also make packet captures unreadable.
+ *
+ * Encoders must write LE explicitly rather than memcpy a struct.
  *
  * Frames carry no authentication. Anyone who can reach the proxy's port can write to
  * any dataset it serves. 
@@ -45,7 +54,16 @@
 #include <stdint.h>
 #include <stddef.h>
 
-#define NM_FRAME_MAGIC   0x4E4D5331u  /* "NMS1", checked before anything is trusted */
+/*
+ * Magic, checked before anything else is trusted.
+ *
+ * A byte sequence rather than an integer, on purpose: written as a little-endian
+ * uint32 it would appear as "1SMN" in tcpdump or Wireshark, and a magic number's
+ * whole job is to be recognisable when you are staring at a packet capture.
+ */
+#define NM_FRAME_MAGIC       "NMS1"
+#define NM_FRAME_MAGIC_BYTES 4
+
 #define NM_FRAME_VERSION 1
 
 /* Datagrams stay under this so IP never fragments them. Fragmentation would turn one
@@ -119,7 +137,7 @@ typedef struct {
  *   hello-frame   = magic version %x01 reserved session-id config-id hello-body
  *   data-frame    = magic version %x02 reserved session-id config-id data-body
  *
- *   magic         = %x31.53.4D.4E   ; NM_FRAME_MAGIC as a little-endian uint32
+ *   magic         = %x4E.4D.53.31   ; "NMS1", in order
  *   version       = OCTET           ; NM_FRAME_VERSION; a decoder rejects others
  *   reserved      = 2OCTET          ; zero
  *   session-id    = u64             ; distinguishes concurrent models
