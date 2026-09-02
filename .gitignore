@@ -68,3 +68,6 @@ slprj/
 .vscode
 
 build-linux/
+
+# Third-party SDKs, fetched locally rather than committed
+ext/
