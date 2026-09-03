@@ -72,6 +72,18 @@ library: build
 sim-test: build
     "{{matlab}}" -batch "cd simulink; addpath(pwd, fullfile(pwd,'blocks'), fullfile(pwd,'tests')); blocksmoke"
 
+# Check the MATLAB frame decoder against the same fixtures as the C and Go ones
+matlab-test:
+    "{{matlab}}" -batch "addpath('matlab', fullfile('matlab','tests')); nmframe_test"
+
+# Usage:
+#   just matlab-proxy            listen on 15400 until Ctrl-C
+#   just matlab-proxy port=15401
+#
+# Run the readable reference proxy — decodes and reports, writes nothing
+matlab-proxy port="15400":
+    "{{matlab}}" -batch "addpath('matlab'); nmproxy_reference('Port', {{port}})"
+
 # Delete the build tree and the built block
 clean:
     rm -rf {{builddir}} simulink/blocks

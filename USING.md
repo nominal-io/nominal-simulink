@@ -178,6 +178,27 @@ Set **Mode** to `Via proxy`, then **Proxy host** and **Proxy port** to match `li
 the config. Nothing else changes — the same channel names, dataset RID and sample time
 apply.
 
+### Reading the protocol, or implementing your own relay
+
+There is a second, deliberately readable proxy written in plain MATLAB:
+
+```powershell
+just matlab-proxy            # listens on 15400 until Ctrl-C
+just matlab-proxy port=15401
+```
+
+It decodes frames and prints what arrived; it writes nothing to Nominal. Use it to
+confirm a model really is sending, or as a worked example if you need a relay in a
+language we do not ship — the decoder is about 150 lines of `.m` with no toolboxes and
+no MEX, so the protocol is visible rather than hidden behind a library.
+
+`matlab/nmframe_decode.m` is the decoder, `matlab/nmframe_configid.m` the hash. Both are
+checked against the same golden fixtures as the C and Go implementations:
+
+```powershell
+just matlab-test
+```
+
 ### Trying it without a token
 
 To check frames are arriving before involving real credentials, set `dry_run: true` in
