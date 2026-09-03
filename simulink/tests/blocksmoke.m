@@ -154,6 +154,52 @@ function blocksmoke()
     failures = report(failures, portOk, ...
                       'enabling showDropped adds a working output port');
 
+    % 6 ------------------------------------------------------------- proxy mode runs
+    %
+    % Pointed at a closed port, so nothing receives the datagrams. That is the point:
+    % proxy mode must not need a token, must not need a reachable relay to start, and
+    % must not stall the model when the relay is absent.
+    proxyOk = false;
+    model3 = 'nm_blocksmoke_proxy';
+    try
+        if bdIsLoaded(model3)
+            close_system(model3, 0);
+        end
+        new_system(model3);
+        load_system(model3);
+        cleanup3 = onCleanup(@() closeQuietly(model3)); %#ok<NASGU>
+
+        blk3 = [model3 '/sink'];
+        add_block('nominal_lib/Nominal Stream Sink', blk3);
+        set_param(blk3, ...
+            'channels',     '''smoke.a, smoke.b, smoke.c''', ...
+            'datasetRid',   '''ri.catalog.test.dataset.0''', ...
+            'mode',         'Via proxy', ...
+            'proxyHost',    '''127.0.0.1''', ...
+            'proxyPort',    '1', ...
+            'sampleTime',   '0.01', ...
+            'capacityRows', '64', ...
+            'timeMode',     'Simulation time from start');
+
+        add_block('simulink/Sources/Constant', [model3 '/src'], 'Value', '[1 2 3]');
+        add_line(model3, 'src/1', 'sink/1');
+        set_param(model3, 'StopTime', '0.05', 'SolverType', 'Fixed-step', ...
+                          'FixedStep', '0.01');
+
+        % Deliberately cleared: proxy mode must not require a credential, since the
+        % whole point is that the token stays on the relay.
+        saved = getenv('NOMINAL_TOKEN');
+        setenv('NOMINAL_TOKEN', '');
+        restore = onCleanup(@() setenv('NOMINAL_TOKEN', saved)); %#ok<NASGU>
+
+        sim(model3, 'StopTime', '0.05');
+        proxyOk = true;
+    catch err
+        fprintf('  %s\n', err.message);
+    end
+    failures = report(failures, proxyOk, ...
+                      'proxy mode runs with no token and no relay listening');
+
     fprintf('--- %s ---\n', ternary(failures == 0, 'all passed', 'FAILURES'));
     if failures > 0
         error('blocksmoke: %d check(s) failed', failures);

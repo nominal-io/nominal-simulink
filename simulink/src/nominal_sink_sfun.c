@@ -57,8 +57,14 @@ enum {
     P_CAPACITY,       /* ring capacity in rows */
     P_TIME_MODE,      /* 1 = simulation time from an epoch, 2 = host wall clock */
     P_SHOW_DROPPED,   /* non-zero adds an output port carrying the discarded-row count */
+    P_MODE,           /* 1 = direct HTTPS, 2 = frames to a relay */
+    P_PROXY_HOST,
+    P_PROXY_PORT,
     P_COUNT
 };
+
+/* One-based, matching the mask popup's evaluated option index. */
+enum { MODE_DIRECT = 1, MODE_PROXY = 2 };
 
 /* One-based to match a Simulink mask popup, whose evaluated value is the option
  * index. Keeping the C side aligned with the mask avoids an off-by-one that would
@@ -288,21 +294,29 @@ static void mdlStart(SimStruct *S)
     char      **names = NULL;
     size_t      count = 0;
     const char *token;
+    char       *proxy_host = NULL;
+    int         mode;
 
     ssSetPWorkValue(S, 0, NULL);
 
+    mode = (int)mxGetScalar(ssGetSFcnParam(S, P_MODE));
+
+    /* Only direct mode needs a credential. In proxy mode the dataset RID travels in
+     * the frames and the token lives on the relay, so this machine holds nothing worth
+     * stealing — demanding one here would be asking for a secret we will not use. */
     token = getenv("NOMINAL_TOKEN");
-    if (token == NULL || token[0] == '\0') {
+    if (mode != MODE_PROXY && (token == NULL || token[0] == '\0')) {
         ssSetErrorStatus(S, "Nominal Stream Sink: NOMINAL_TOKEN is not set. "
                             "The token is read from the environment rather than stored "
-                            "in the model.");
+                            "in the model. (Proxy mode does not need one.)");
         return;
     }
 
-    csv = param_string(S, P_CHANNELS);
-    rid = param_string(S, P_DATASET);
-    url = param_string(S, P_BASE_URL);
-    count = split_names(csv, &storage, &names);
+    csv        = param_string(S, P_CHANNELS);
+    rid        = param_string(S, P_DATASET);
+    url        = param_string(S, P_BASE_URL);
+    proxy_host = param_string(S, P_PROXY_HOST);
+    count      = split_names(csv, &storage, &names);
 
     if (count == 0 || rid == NULL || rid[0] == '\0') {
         ssSetErrorStatus(S, "Nominal Stream Sink: a dataset RID and at least one "
@@ -322,12 +336,29 @@ static void mdlStart(SimStruct *S)
     st->epoch_nanos   = nm_now_nanos();
 
     memset(&cfg, 0, sizeof cfg);
-    cfg.base_url      = (url != NULL && url[0] != '\0')
-                      ? url : "https://api.gov.nominal.io/api";
-    cfg.token         = token;
     cfg.dataset_rid   = rid;
     cfg.channel_names = (const char *const *)names;
     cfg.channel_count = count;
+
+    if (mode == MODE_PROXY) {
+        double port = mxGetScalar(ssGetSFcnParam(S, P_PROXY_PORT));
+
+        if (proxy_host == NULL || proxy_host[0] == '\0' ||
+            port < 1.0 || port > 65535.0) {
+            ssSetErrorStatus(S, "Nominal Stream Sink: proxy mode needs a host and a "
+                                "port between 1 and 65535.");
+            free(st);
+            goto cleanup;
+        }
+        cfg.mode       = NM_MODE_PROXY;
+        cfg.proxy_host = proxy_host;
+        cfg.proxy_port = (uint16_t)port;
+    } else {
+        cfg.mode     = NM_MODE_DIRECT;
+        cfg.base_url = (url != NULL && url[0] != '\0')
+                     ? url : "https://api.gov.nominal.io/api";
+        cfg.token    = token;
+    }
     cfg.capacity_rows = (size_t)mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
     cfg.max_batch_delay_ms = 100;
     /* An RTOS has no OS trust store, so a target needs an explicit bundle. On the
@@ -358,6 +389,7 @@ cleanup:
     free(csv);
     free(rid);
     free(url);
+    free(proxy_host);
     free(names);
     free(storage);
 }

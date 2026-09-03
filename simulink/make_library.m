@@ -32,7 +32,8 @@ function make_library()
     set_param(blockPath, ...
         'FunctionName', 'nominal_sink_sfun', ...
         'Parameters', ['channels, datasetRid, baseUrl, sampleTime, ' ...
-                       'capacityRows, timeMode, showDropped']);
+                       'capacityRows, timeMode, showDropped, ' ...
+                       'mode, proxyHost, proxyPort']);
 
     % --- mask -------------------------------------------------------------------
     %
@@ -57,9 +58,24 @@ function make_library()
     m.addParameter('Type', 'edit', 'Name', 'datasetRid', ...
         'Prompt', 'Dataset RID', 'Value', '''''');
 
+    % Direct sends HTTPS from this machine; proxy sends compact datagrams to a relay
+    % that does the protobuf, TLS and HTTP instead. One block rather than two, because
+    % the expected journey is direct until the host runs out of headroom and then proxy
+    % — and that should be a dropdown, not a re-wire.
+    m.addParameter('Type', 'popup', 'Name', 'mode', ...
+        'Prompt', 'Mode', ...
+        'TypeOptions', {'Direct to Nominal', 'Via proxy'}, ...
+        'Value', 'Direct to Nominal', 'Evaluate', 'on');
+
     m.addParameter('Type', 'edit', 'Name', 'baseUrl', ...
         'Prompt', 'API base URL', ...
         'Value', '''https://api.gov.nominal.io/api''');
+
+    m.addParameter('Type', 'edit', 'Name', 'proxyHost', ...
+        'Prompt', 'Proxy host', 'Value', '''127.0.0.1''');
+
+    m.addParameter('Type', 'edit', 'Name', 'proxyPort', ...
+        'Prompt', 'Proxy port', 'Value', '15400');
 
     m.addParameter('Type', 'edit', 'Name', 'sampleTime', ...
         'Prompt', 'Sample time (s) — how often to write, not the solver step', ...
@@ -88,7 +104,31 @@ function make_library()
         'Prompt', 'Add an output port with the discarded-row count', ...
         'Value', 'off', 'Evaluate', 'on');
 
-    m.Display = 'disp(''Nominal Stream Sink'')';
+    % --- dialog logic ------------------------------------------------------------
+    %
+    % Grey out whichever fields the chosen mode ignores, so the dialog cannot suggest
+    % that a proxy host matters in direct mode or that an API URL matters in proxy mode.
+    % A visible-but-inert field is a standing invitation to fill it in and wonder why
+    % nothing changed.
+    %
+    % The callback lives in its own file and works by parameter *name*. The positional
+    % MaskEnables array would do the same job but breaks silently the moment a field is
+    % reordered, and this dialog is going to grow.
+    m.getParameter('mode').Callback = 'nominal_sink_modecb(gcb);';
+
+    % Show the transport on the canvas. This is what a separate proxy block would have
+    % bought us, without the duplication: you can still see at a glance which way a
+    % model streams.
+    m.Display = [ ...
+        'if strcmp(get_param(gcb,''mode''),''Via proxy'')' newline ...
+        '    disp(sprintf(''Nominal Stream Sink\n(proxy)''));' newline ...
+        'else' newline ...
+        '    disp(sprintf(''Nominal Stream Sink\n(direct)''));' newline ...
+        'end'];
+
+    % Apply it once now, so a freshly dragged block starts with the right fields greyed
+    % rather than waiting for the user to touch the popup.
+    nominal_sink_modecb(blockPath);
 
     % --- save -------------------------------------------------------------------
     set_param(libName, 'Lock', 'off');
