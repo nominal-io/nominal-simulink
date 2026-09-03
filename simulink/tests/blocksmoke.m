@@ -10,6 +10,14 @@ function blocksmoke()
     fprintf('--- Nominal sink block smoke test ---\n');
     failures = 0;
 
+    % Direct mode refuses to start without a token, correctly. Supply a dummy so the
+    % checks below exercise block mechanics rather than whether the shell happened to
+    % export a credential — otherwise the suite passes or fails for unrelated reasons.
+    % Nothing here reaches a real server, so the value is irrelevant.
+    savedToken = getenv('NOMINAL_TOKEN');
+    setenv('NOMINAL_TOKEN', 'blocksmoke-not-a-real-token');
+    tokenCleanup = onCleanup(@() setenv('NOMINAL_TOKEN', savedToken)); %#ok<NASGU>
+
     % 1 --------------------------------------------------------- MEX is loadable
     %
     % A statically linked MEX still fails to load if a dependency is missing, and the
