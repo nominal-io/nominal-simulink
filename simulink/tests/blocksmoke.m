@@ -30,10 +30,16 @@ function blocksmoke()
 
     cleanup = onCleanup(@() closeQuietly(model));
 
+    % Instantiate from the generated library rather than building a bare S-Function
+    % block. The named parameters below only exist because of the mask, so this
+    % exercises the thing a user actually drags in — mask and S-function together —
+    % instead of a hand-wired approximation of it.
+    if ~bdIsLoaded('nominal_lib')
+        load_system('nominal_lib');
+    end
+
     blk = [model '/sink'];
-    add_block('built-in/S-Function', blk, ...
-        'FunctionName', 'nominal_sink_sfun', ...
-        'Parameters', 'channels, datasetRid, baseUrl, sampleTime, capacityRows, timeMode');
+    add_block('nominal_lib/Nominal Stream Sink', blk);
 
     % Three channels, so the input port should size itself to 3.
     set_param(blk, ...
@@ -42,7 +48,9 @@ function blocksmoke()
         'baseUrl',      '''https://127.0.0.1:1''', ...
         'sampleTime',   '0.01', ...
         'capacityRows', '64', ...
-        'timeMode',     '1');
+        ... % A popup takes its option text here, even though Evaluate is on and the
+        ... % S-function receives the 1-based index. Setting '1' is rejected.
+        'timeMode',     'Simulation time from start');
 
     src = [model '/src'];
     add_block('simulink/Sources/Constant', src, 'Value', '[1 2 3]');
@@ -56,15 +64,30 @@ function blocksmoke()
                      'FixedStep', '0.01');
 
     % 3 --------------------------------------------------- port width follows channels
+    %
+    % CompiledPortWidths only exists while the model is compiled, so compile it
+    % explicitly rather than skipping the check. This is worth asserting: the port width
+    % is derived from the channel list inside mdlInitializeSizes, and if the two ever
+    % disagree, nm_push would read past the end of the input signal.
+    widthsOk = false;
     try
+        set_param(model, 'SimulationCommand', 'update');
         c = get_param(blk, 'CompiledPortWidths');
-        failures = report(failures, isequal(c.Inport, 3), ...
-                          'input port width follows the channel list');
-    catch
-        % CompiledPortWidths needs a compiled model; fall through to the run below,
-        % which is the stronger check anyway.
-        fprintf('note: port widths unavailable before compile\n');
+        widthsOk = isequal(c.Inport, 3) && isequal(c.Outport, 1);
+        if ~widthsOk
+            fprintf('  got inport %s, outport %s\n', mat2str(c.Inport), mat2str(c.Outport));
+        end
+    catch err
+        fprintf('  compile failed: %s\n', err.message);
     end
+    % Release the compiled state whether or not the query worked, or the model stays
+    % locked and the sim below fails for an unrelated reason.
+    try
+        set_param(model, 'SimulationCommand', 'term');
+    catch
+    end
+    failures = report(failures, widthsOk, ...
+                      'input port width follows the channel list (3 in, 1 out)');
 
     % 4 ------------------------------------------------------------- it actually steps
     %

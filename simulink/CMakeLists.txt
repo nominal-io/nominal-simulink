@@ -31,6 +31,13 @@ matlab_add_mex(
 
 target_include_directories(nominal_sink_sfun PRIVATE "${NM_SIMULINK_INCLUDE}")
 
+# A fault inside an S-function is reported as a bare access violation that takes MATLAB
+# with it, naming no callback. -DNM_SFUN_TRACE=ON logs each one on entry.
+option(NM_SFUN_TRACE "Log S-function callback entry and exit" OFF)
+if(NM_SFUN_TRACE)
+  target_compile_definitions(nominal_sink_sfun PRIVATE NM_SFUN_TRACE=1)
+endif()
+
 # Plain signature, not PRIVATE: matlab_add_mex already links the MEX libraries with the
 # non-keyword form, and CMake refuses to mix the two on one target.
 target_link_libraries(nominal_sink_sfun nominalstream)

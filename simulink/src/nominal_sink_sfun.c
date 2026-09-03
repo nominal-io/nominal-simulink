@@ -35,6 +35,19 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* Build with -DNM_SFUN_TRACE=1 to log callback entry and exit. A fault inside an
+ * S-function surfaces as a bare access violation that takes MATLAB down with it, with
+ * no indication of which callback was running, so having this switchable is worth the
+ * few lines. */
+#if defined(NM_SFUN_TRACE) && NM_SFUN_TRACE
+/* mexPrintf only. Calling mexEvalString here would re-enter the MATLAB interpreter from
+ * inside a callback declared SS_OPTION_EXCEPTION_FREE_CODE, which is exactly what that
+ * option promises not to do. */
+#define NM_TRACE(...) mexPrintf("[nm] " __VA_ARGS__)
+#else
+#define NM_TRACE(...) ((void)0)
+#endif
+
 /* Block parameters, in mask order. */
 enum {
     P_CHANNELS = 0,   /* comma-separated channel names */
@@ -168,6 +181,7 @@ static size_t split_names(const char *csv, char **storage, char ***names)
 
 static void mdlInitializeSizes(SimStruct *S)
 {
+    NM_TRACE("mdlInitializeSizes enter\n");
     char  *csv;
     char  *storage = NULL;
     char **names   = NULL;
@@ -198,6 +212,8 @@ static void mdlInitializeSizes(SimStruct *S)
         return;
     }
 
+    NM_TRACE("mdlInitializeSizes: %u channels parsed\n", (unsigned)count);
+
     if (!ssSetNumInputPorts(S, 1)) {
         return;
     }
@@ -215,20 +231,32 @@ static void mdlInitializeSizes(SimStruct *S)
     ssSetOutputPortWidth(S, 0, 1);
     ssSetOutputPortDataType(S, 0, SS_DOUBLE);
 
+    NM_TRACE("mdlInitializeSizes: ports declared\n");
+
     ssSetNumSampleTimes(S, 1);
     ssSetNumPWork(S, 1);
+    NM_TRACE("mdlInitializeSizes: work vectors declared\n");
 
     /* No zero-crossings, and the block is safe to leave out of a model that does not
      * need it. Exception-free code lets Simulink skip its own try/catch wrapper. */
-    ssSetOptions(S, SS_OPTION_EXCEPTION_FREE_CODE |
-                    SS_OPTION_CALL_TERMINATE_ON_EXIT);
+    /* Deliberately NOT SS_OPTION_EXCEPTION_FREE_CODE. That option promises the callbacks
+     * never invoke anything that can raise a MATLAB exception, and this file calls
+     * mxGetString and (when tracing) mexPrintf, which can. The promise buys a little
+     * speed and costs Simulink's protective wrapper, so breaking it turns any fault
+     * into an access violation that takes MATLAB down with no diagnostic. */
+    ssSetOptions(S, SS_OPTION_CALL_TERMINATE_ON_EXIT);
+    NM_TRACE("mdlInitializeSizes leave\n");
 }
 
 static void mdlInitializeSampleTimes(SimStruct *S)
 {
     /* An explicit discrete rate, not an inherited one: this is how often telemetry is
      * written, which is a separate decision from the solver step. */
-    real_T ts = mxGetScalar(ssGetSFcnParam(S, P_SAMPLE_TIME));
+    real_T ts;
+
+    NM_TRACE("mdlInitializeSampleTimes enter\n");
+    ts = mxGetScalar(ssGetSFcnParam(S, P_SAMPLE_TIME));
+    NM_TRACE("mdlInitializeSampleTimes: ts=%g\n", ts);
 
     ssSetSampleTime(S, 0, ts > 0.0 ? ts : 0.001);
     ssSetOffsetTime(S, 0, 0.0);
@@ -238,6 +266,7 @@ static void mdlInitializeSampleTimes(SimStruct *S)
 #define MDL_START
 static void mdlStart(SimStruct *S)
 {
+    NM_TRACE("mdlStart enter\n");
     sink_state *st;
     nm_config   cfg;
     nm_status   status = NM_OK;
@@ -310,6 +339,7 @@ static void mdlStart(SimStruct *S)
     }
 
     ssSetPWorkValue(S, 0, st);
+    NM_TRACE("mdlStart: stream open, %u channels\n", (unsigned)st->channel_count);
 
 cleanup:
     free(csv);
@@ -327,6 +357,8 @@ static void mdlOutputs(SimStruct *S, int_T tid)
     int64_t        ts;
 
     (void)tid;   /* plain cast rather than UNUSED_ARG, which is not in every release */
+
+    NM_TRACE("mdlOutputs enter (st=%p)\n", (void *)st);
 
     if (st == NULL || st->stream == NULL) {
         return;
@@ -357,8 +389,27 @@ static void mdlOutputs(SimStruct *S, int_T tid)
 
 static void mdlTerminate(SimStruct *S)
 {
-    sink_state *st = ssGetPWorkValue(S, 0);
+    sink_state *st;
 
+    NM_TRACE("mdlTerminate enter\n");
+
+    /*
+     * Simulink runs a query pass before simulating: mdlInitializeSizes, then
+     * mdlTerminate, and only on a second pass does mdlStart run. So mdlTerminate is
+     * reached with the PWork vector not yet allocated, and ssGetPWorkValue then reads
+     * through a null base pointer — yielding garbage rather than NULL, so an
+     * `st == NULL` check does not save you. Dereferencing it is an access violation
+     * that takes MATLAB down with nothing but "segmentation violation in the
+     * S-function" to go on.
+     *
+     * Checking the vector exists before reading an element is what makes this safe.
+     */
+    if (ssGetPWork(S) == NULL) {
+        NM_TRACE("mdlTerminate: no PWork yet (query pass), nothing to release\n");
+        return;
+    }
+
+    st = ssGetPWorkValue(S, 0);
     if (st == NULL) {
         return;
     }
