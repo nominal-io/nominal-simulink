@@ -166,6 +166,16 @@ uint64_t nm_dropped_rows(const nm_stream *s);
  */
 void nm_close(nm_stream *s);
 
+/*
+ * Flush, report, and release.
+ *
+ * Identical to nm_close but fills *out first. Exists because the counts a caller
+ * actually wants are the ones after the final flush, and by then nm_close has freed
+ * the stream — so there is otherwise no moment at which the true totals can be read.
+ * Passing NULL is the same as nm_close.
+ */
+void nm_close_stats(nm_stream *s, nm_stats_t *out);
+
 /* Human-readable text for a status code. Returns a static string; never NULL. */
 const char *nm_strerror(nm_status status);
 

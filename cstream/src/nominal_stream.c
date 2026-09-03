@@ -470,7 +470,15 @@ uint64_t nm_dropped_rows(const nm_stream *s)
 
 void nm_close(nm_stream *s)
 {
+    nm_close_stats(s, NULL);
+}
+
+void nm_close_stats(nm_stream *s, nm_stats_t *out)
+{
     if (s == NULL) {
+        if (out != NULL) {
+            memset(out, 0, sizeof *out);
+        }
         return;
     }
 
@@ -489,6 +497,12 @@ void nm_close(nm_stream *s)
     }
     if (s->udp != NULL) {
         nm_udp_close(s->udp);
+    }
+
+    /* After the final drain above, so these are the real totals rather than whatever
+     * had been sent when the caller happened to ask. */
+    if (out != NULL) {
+        nm_stats(s, out);
     }
 
     nm_ring_free(&s->ring);

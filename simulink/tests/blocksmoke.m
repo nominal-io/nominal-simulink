@@ -56,10 +56,10 @@ function blocksmoke()
     add_block('simulink/Sources/Constant', src, 'Value', '[1 2 3]');
     add_line(model, 'src/1', 'sink/1');
 
-    term = [model '/term'];
-    add_block('simulink/Sinks/Terminator', term);
-    add_line(model, 'sink/1', 'term/1');
-
+    % Deliberately nothing attached to an output, and no Terminator. Simulink treats an
+    % unconnected output port as a block error, so a sink that always exposes one forces
+    % every user to wire up a diagnostic they may not want — which is exactly the
+    % failure this asserts is gone. showDropped defaults off, so there is no port here.
     set_param(model, 'StopTime', '0.05', 'SolverType', 'Fixed-step', ...
                      'FixedStep', '0.01');
 
@@ -73,7 +73,7 @@ function blocksmoke()
     try
         set_param(model, 'SimulationCommand', 'update');
         c = get_param(blk, 'CompiledPortWidths');
-        widthsOk = isequal(c.Inport, 3) && isequal(c.Outport, 1);
+        widthsOk = isequal(c.Inport, 3) && isempty(c.Outport);
         if ~widthsOk
             fprintf('  got inport %s, outport %s\n', mat2str(c.Inport), mat2str(c.Outport));
         end
@@ -87,7 +87,7 @@ function blocksmoke()
     catch
     end
     failures = report(failures, widthsOk, ...
-                      'input port width follows the channel list (3 in, 1 out)');
+                      'input width follows the channel list, and no output by default');
 
     % 4 ------------------------------------------------------------- it actually steps
     %
@@ -102,6 +102,57 @@ function blocksmoke()
         fprintf('  simulation error: %s\n', err.message);
     end
     failures = report(failures, ok, 'model steps with an unreachable endpoint');
+
+    % 5 ------------------------------------------- the opt-in output port still works
+    %
+    % Turning it on must produce a real port, otherwise the diagnostic is unavailable
+    % to the people who do want it.
+    % In a fresh model rather than by mutating the one above: a model that has already
+    % run a simulation does not reliably accept another compile, and the resulting
+    % 'Invalid setting for SimulationCommand' says nothing about the block.
+    portOk = false;
+    model2 = 'nm_blocksmoke_ports';
+    try
+        if bdIsLoaded(model2)
+            close_system(model2, 0);
+        end
+        new_system(model2);
+        load_system(model2);
+        cleanup2 = onCleanup(@() closeQuietly(model2)); %#ok<NASGU>
+
+        blk2 = [model2 '/sink'];
+        add_block('nominal_lib/Nominal Stream Sink', blk2);
+        set_param(blk2, ...
+            'channels',     '''smoke.a, smoke.b, smoke.c''', ...
+            'datasetRid',   '''ri.catalog.test.dataset.0''', ...
+            'baseUrl',      '''https://127.0.0.1:1''', ...
+            'sampleTime',   '0.01', ...
+            'capacityRows', '64', ...
+            'timeMode',     'Simulation time from start', ...
+            'showDropped',  'on');
+
+        add_block('simulink/Sources/Constant', [model2 '/src'], 'Value', '[1 2 3]');
+        add_line(model2, 'src/1', 'sink/1');
+        add_block('simulink/Sinks/Terminator', [model2 '/term']);
+        add_line(model2, 'sink/1', 'term/1');
+        set_param(model2, 'StopTime', '0.05', 'SolverType', 'Fixed-step', ...
+                          'FixedStep', '0.01');
+
+        % 'Ports' is a static query — [in out enable trigger state ...] — so unlike
+        % CompiledPortWidths it needs no compile. That matters here: SimulationCommand
+        % is not reliably accepted once another model has simulated in the same
+        % -batch session, and port *count* is all this check needs.
+        p = get_param(blk2, 'Ports');
+        portOk = numel(p) >= 2 && p(1) == 1 && p(2) == 1;
+        if ~portOk
+            fprintf('  Ports = %s, wanted 1 in and 1 out\n', mat2str(p));
+        end
+    catch err
+        fprintf('  %s\n', err.message);
+        portOk = false;
+    end
+    failures = report(failures, portOk, ...
+                      'enabling showDropped adds a working output port');
 
     fprintf('--- %s ---\n', ternary(failures == 0, 'all passed', 'FAILURES'));
     if failures > 0

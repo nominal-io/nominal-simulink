@@ -32,7 +32,7 @@ function make_library()
     set_param(blockPath, ...
         'FunctionName', 'nominal_sink_sfun', ...
         'Parameters', ['channels, datasetRid, baseUrl, sampleTime, ' ...
-                       'capacityRows, timeMode']);
+                       'capacityRows, timeMode, showDropped']);
 
     % --- mask -------------------------------------------------------------------
     %
@@ -79,6 +79,14 @@ function make_library()
         'TypeOptions', {'Simulation time from start', 'Host wall clock'}, ...
         'Value', 'Simulation time from start', ...
         'Evaluate', 'on');
+
+    % Off by default: Simulink treats an unconnected output as a block error, so a port
+    % that is always there would force every user of a sink to wire up or terminate a
+    % diagnostic most of them do not want. With it off, the block still warns at the end
+    % of a run if anything was dropped, so loss is never silent.
+    m.addParameter('Type', 'checkbox', 'Name', 'showDropped', ...
+        'Prompt', 'Add an output port with the discarded-row count', ...
+        'Value', 'off', 'Evaluate', 'on');
 
     m.Display = 'disp(''Nominal Stream Sink'')';
 

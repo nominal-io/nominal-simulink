@@ -56,6 +56,7 @@ enum {
     P_SAMPLE_TIME,    /* seconds between writes (decimation, not the solver step) */
     P_CAPACITY,       /* ring capacity in rows */
     P_TIME_MODE,      /* 1 = simulation time from an epoch, 2 = host wall clock */
+    P_SHOW_DROPPED,   /* non-zero adds an output port carrying the discarded-row count */
     P_COUNT
 };
 
@@ -224,12 +225,24 @@ static void mdlInitializeSizes(SimStruct *S)
      * the ring with no gather step. */
     ssSetInputPortRequiredContiguous(S, 0, 1);
 
-    /* Discarded rows, so saturation is observable from inside the model. */
-    if (!ssSetNumOutputPorts(S, 1)) {
+    /*
+     * The discarded-row count, as an optional output port.
+     *
+     * Optional because Simulink treats an unconnected output as a block error, so a
+     * port that is always present forces every user of a *sink* to wire up or
+     * terminate a diagnostic most of them do not want. Off by default therefore, and
+     * mdlTerminate warns if anything was actually dropped — loss stays impossible to
+     * miss without making the common case awkward.
+     */
+    if (mxGetScalar(ssGetSFcnParam(S, P_SHOW_DROPPED)) != 0.0) {
+        if (!ssSetNumOutputPorts(S, 1)) {
+            return;
+        }
+        ssSetOutputPortWidth(S, 0, 1);
+        ssSetOutputPortDataType(S, 0, SS_DOUBLE);
+    } else if (!ssSetNumOutputPorts(S, 0)) {
         return;
     }
-    ssSetOutputPortWidth(S, 0, 1);
-    ssSetOutputPortDataType(S, 0, SS_DOUBLE);
 
     NM_TRACE("mdlInitializeSizes: ports declared\n");
 
@@ -353,7 +366,6 @@ static void mdlOutputs(SimStruct *S, int_T tid)
 {
     sink_state    *st = ssGetPWorkValue(S, 0);
     const real_T  *u;
-    real_T        *y = ssGetOutputPortRealSignal(S, 0);
     int64_t        ts;
 
     (void)tid;   /* plain cast rather than UNUSED_ARG, which is not in every release */
@@ -384,7 +396,10 @@ static void mdlOutputs(SimStruct *S, int_T tid)
 
     /* nm_dropped_rows, not nm_stats: the latter copies a 256-byte error string to
      * hand back one number, which is not something to do every step. */
-    y[0] = (real_T)nm_dropped_rows(st->stream);
+    if (ssGetNumOutputPorts(S) > 0) {
+        real_T *y = ssGetOutputPortRealSignal(S, 0);
+        y[0] = (real_T)nm_dropped_rows(st->stream);
+    }
 }
 
 static void mdlTerminate(SimStruct *S)
@@ -418,7 +433,32 @@ static void mdlTerminate(SimStruct *S)
      * data has landed before the simulation is considered over. A deadlock here would
      * hang MATLAB silently, which is why the library's sender thread takes no lock the
      * producer can hold. */
-    nm_close(st->stream);
+    /*
+     * nm_close_stats rather than nm_close, because the counts worth reporting are the
+     * ones after the final flush — and nm_close frees the stream, so there is no later
+     * moment at which to read them.
+     */
+    nm_stats_t stats;
+    nm_close_stats(st->stream, &stats);
+
+    /*
+     * Report only when something went wrong. This is what keeps loss from being silent
+     * now that the output port is off by default: a run that dropped rows says so,
+     * whether or not anyone wired up the diagnostic.
+     */
+    if (stats.rows_dropped > 0 || stats.requests_failed > 0) {
+        static char warn[512];
+        snprintf(warn, sizeof warn,
+                 "Nominal Stream Sink: %llu of %llu rows did not reach Nominal "
+                 "(%llu requests failed, last HTTP status %ld).%s%s",
+                 (unsigned long long)stats.rows_dropped,
+                 (unsigned long long)stats.rows_accepted,
+                 (unsigned long long)stats.requests_failed,
+                 stats.last_http_status,
+                 stats.last_error[0] != '\0' ? " Last error: " : "",
+                 stats.last_error);
+        ssWarning(S, warn);
+    }
     free(st);
     ssSetPWorkValue(S, 0, NULL);
 }
