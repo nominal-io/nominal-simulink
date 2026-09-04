@@ -61,8 +61,13 @@ func run(configPath string) error {
 		log.Info("dry run: frames will be decoded and reported, nothing written")
 		writer = &proxy.LogWriter{Log: log, Verbose: cfg.LogLevel == "debug"}
 	} else {
-		return fmt.Errorf("only dry_run is implemented so far; " +
-			"the Nominal writer is the next piece")
+		nw, err := proxy.NewNominalWriter(cfg, log)
+		if err != nil {
+			return err
+		}
+		defer nw.Close()
+		writer = nw
+		log.Info("writing to Nominal", "base_url", cfg.Nominal.BaseURL)
 	}
 
 	registry := proxy.NewRegistry(writer, cfg, log)
