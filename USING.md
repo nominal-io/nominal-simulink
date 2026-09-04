@@ -61,7 +61,8 @@ Double-click the block.
 
 | Field | What it does |
 |---|---|
-| **Channel names (comma-separated)** | Names as they will appear in Nominal, e.g. `engine.rpm, engine.egt, engine.psi`. The count sets the input port width. |
+| **Channel names (comma-separated)** | Names as they will appear in Nominal, e.g. `engine.rpm, engine.egt, engine.psi`. The count sets the input port width. Use the button below rather than typing them. |
+| **Detect from connected signal** | Reads the names off whatever is wired into the input. See below. |
 | **Dataset RID** | An existing Nominal dataset. The block writes points; it does not create datasets. |
 | **Mode** | `Direct to Nominal` or `Via proxy`. See below. |
 | **API base URL** | Direct mode only. Must match the RID's environment — a `cerulean-staging` RID will not resolve against the production host. |
@@ -72,6 +73,30 @@ Double-click the block.
 | **Add an output port with the discarded-row count** | Off by default. Ticking it adds an output you can wire to a Display to watch loss live. |
 
 Fields the selected mode ignores are greyed out.
+
+### Detecting channel names
+
+Wire up your signals first, then click **Detect from connected signal**. It fills the
+channel list in from the model, which is worth doing rather than typing: the list sets
+the input port width, so one name too many or too few misaligns every column after it.
+
+What it reads, depending on what you connected:
+
+| Connected | Names come from |
+|---|---|
+| **Bus Creator** | the bus element names — the best case, since adding a signal later means editing the bus rather than the block |
+| **Mux** | each incoming line's signal name, or its source block if the line is unnamed |
+| **Bus Selector** | the selected signals |
+| anything else | the signal's name, or its source block's |
+
+Duplicates are made unique with a `_2` suffix rather than silently collapsing two
+signals into one channel.
+
+One limitation: it does not compile the model, so a button press is instant and works on
+a half-finished diagram. The cost is that a *vector* signal of width N carrying a single
+name yields one name, not N — there is no way to know the width without compiling. The
+block then reports a width mismatch, which is a clear error rather than silent
+misalignment; name the elements or use a Mux.
 
 ### The token
 

@@ -69,8 +69,8 @@ library: build
     "{{matlab}}" -batch "cd simulink; make_library"
 
 # Load the block and step a model without touching the network
-sim-test: build
-    "{{matlab}}" -batch "cd simulink; addpath(pwd, fullfile(pwd,'blocks'), fullfile(pwd,'tests')); blocksmoke"
+sim-test: build library
+    "{{matlab}}" -batch "cd simulink; addpath(pwd, fullfile(pwd,'blocks'), fullfile(pwd,'tests')); blocksmoke; autonames_test"
 
 # Check the MATLAB frame decoder against the same fixtures as the C and Go ones
 matlab-test:

@@ -55,6 +55,16 @@ function make_library()
         'Prompt', 'Channel names (comma-separated)', ...
         'Value', '''engine.rpm, engine.egt, engine.psi''');
 
+    % Typing the names by hand is tedious and quietly error-prone: the list sets the
+    % input port width, so one name too many or too few misaligns every column after
+    % it. This reads them off whatever is wired in.
+    %
+    % A dialog control rather than a parameter — a button holds no value, and
+    % addParameter rejects the type.
+    detect = m.addDialogControl('pushbutton', 'detectNames');
+    detect.Prompt   = 'Detect from connected signal';
+    detect.Callback = 'nominal_sink_detect(gcb);';
+
     m.addParameter('Type', 'edit', 'Name', 'datasetRid', ...
         'Prompt', 'Dataset RID', 'Value', '''''');
 
