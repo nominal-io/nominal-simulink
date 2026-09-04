@@ -29,6 +29,8 @@ function autonames_test()
 
     failures = failures + expectError('an unconnected input is reported', @buildUnconnected);
 
+    failures = failures + checkCallbackWithoutPath();
+
     fprintf('--- %s ---\n', pick(failures == 0, 'all passed', 'FAILURES'));
     if failures > 0
         error('autonames_test:failed', '%d check(s) failed', failures);
@@ -79,6 +81,82 @@ end
 
 function [model, blk] = buildUnconnected()
     [model, blk] = newModel('nm_autonames_none');
+end
+
+function n = checkCallbackWithoutPath()
+%CHECKCALLBACKWITHOUTPATH  The failure a user actually hits.
+%
+%   The mask callbacks live beside the library, and dragging a block into a model does
+%   not put that folder on the MATLAB path. Every test above passes because the harness
+%   addpath'd it, which is precisely why they missed this: pressing the button in a real
+%   model gave "Undefined function 'nominal_sink_detect'".
+%
+%   So remove the folder from the path, then evaluate the callback exactly as Simulink
+%   would.
+
+    n = 0;
+    here  = fileparts(fileparts(mfilename('fullpath')));   % the simulink/ folder
+    model = '';
+    oldDir = pwd;
+    restore = onCleanup(@() cleanupPath(here, oldDir));
+
+    try
+        [model, blk] = buildMux(true);
+
+        % Leaving the folder is as important as rmpath: MATLAB resolves functions in the
+        % current directory whatever the path says, so running the suite from inside
+        % simulink/ would hide the very failure this reproduces.
+        cd(tempdir);
+        rmpath(here);
+        if ~isempty(which('nominal_sink_detect'))
+            fprintf('FAIL: could not remove %s from the path; test is meaningless\n', here);
+            n = 1;
+            closeQuietly(model);
+            return;
+        end
+
+        cb  = get_param(blk, 'MaskCallbackString');
+        cbs = strsplit(cb, '|');
+        idx = find(contains(cbs, 'nominal_sink_detect'), 1);
+        if isempty(idx)
+            % Not a parameter callback — the button is a dialog control, so reach for
+            % its callback through the mask object instead.
+            mk  = Simulink.Mask.get(blk);
+            dc  = mk.getDialogControl('detectNames');
+            src = dc.Callback;
+        else
+            src = cbs{idx};
+        end
+
+        % gcb is what a real callback sees.
+        evalCallback(blk, src);
+
+        names = nominal_sink_autonames(blk, false);
+        if isequal(names, {'alpha', 'beta', 'gamma'})
+            fprintf('ok:   the mask callback works with the folder off the path\n');
+        else
+            fprintf('FAIL: callback ran but names were %s\n', strjoin(names, '|'));
+            n = 1;
+        end
+    catch err
+        fprintf('FAIL: the mask callback fails with the folder off the path\n      %s\n', ...
+                err.message);
+        n = 1;
+    end
+
+    closeQuietly(model);
+end
+
+function cleanupPath(here, oldDir)
+    cd(oldDir);
+    addpath(here);
+end
+
+function evalCallback(blk, src)
+% Simulink evaluates callbacks with gcb set to the block, so reproduce that.
+    oldGcb = gcb; %#ok<NASGU>
+    set_param(bdroot(blk), 'CurrentBlock', get_param(blk, 'Name'));
+    evalin('base', src);
 end
 
 % ------------------------------------------------------------------ harness

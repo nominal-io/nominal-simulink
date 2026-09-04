@@ -63,7 +63,7 @@ function make_library()
     % addParameter rejects the type.
     detect = m.addDialogControl('pushbutton', 'detectNames');
     detect.Prompt   = 'Detect from connected signal';
-    detect.Callback = 'nominal_sink_detect(gcb);';
+    detect.Callback = [pathFixPrefix() 'nominal_sink_detect(gcb);'];
 
     m.addParameter('Type', 'edit', 'Name', 'datasetRid', ...
         'Prompt', 'Dataset RID', 'Value', '''''');
@@ -124,7 +124,7 @@ function make_library()
     % The callback lives in its own file and works by parameter *name*. The positional
     % MaskEnables array would do the same job but breaks silently the moment a field is
     % reordered, and this dialog is going to grow.
-    m.getParameter('mode').Callback = 'nominal_sink_modecb(gcb);';
+    m.getParameter('mode').Callback = [pathFixPrefix() 'nominal_sink_modecb(gcb);'];
 
     % Show the transport on the canvas. This is what a separate proxy block would have
     % bought us, without the duplication: you can still see at a glance which way a
@@ -146,4 +146,34 @@ function make_library()
     close_system(libName, 0);
 
     fprintf('wrote %s\n', target);
+end
+
+function prefix = pathFixPrefix()
+%PATHFIXPREFIX  Inline MATLAB prepended to every mask callback.
+%
+%   The callbacks live beside the library, and that folder is not on the MATLAB path
+%   just because a block was dragged into a model. Without this, pressing a button in
+%   the dialog fails with "Undefined function 'nominal_sink_detect'", which tells the
+%   user nothing about what to do.
+%
+%   So each callback first checks whether its target resolves, and if not, finds the
+%   library it was dragged from and adds that library's folder. The block links to
+%   nominal_lib, so ReferenceBlock names it and Simulink knows where the file is.
+%
+%   Written inline rather than as a helper function because a helper would have exactly
+%   the same problem it is solving — it would not be on the path either.
+%
+%   nominal_setup remains for the cases this cannot cover, such as a model opened on a
+%   machine where the library was never loaded.
+
+    prefix = [ ...
+        'if isempty(which(''nominal_sink_detect'')), ' ...
+            'rb = get_param(gcb, ''ReferenceBlock''); ' ...
+            'if ~isempty(rb), ' ...
+                'lib = strtok(rb, ''/''); ' ...
+                'if bdIsLoaded(lib), ' ...
+                    'addpath(fileparts(get_param(lib, ''FileName''))); ' ...
+                'end, ' ...
+            'end, ' ...
+        'end, '];
 end
