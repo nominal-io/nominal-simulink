@@ -30,6 +30,7 @@ function autonames_test()
     failures = failures + expectError('an unconnected input is reported', @buildUnconnected);
 
     failures = failures + checkCallbackWithoutPath();
+    failures = failures + checkSimWithoutPath();
 
     fprintf('--- %s ---\n', pick(failures == 0, 'all passed', 'FAILURES'));
     if failures > 0
@@ -115,18 +116,11 @@ function n = checkCallbackWithoutPath()
             return;
         end
 
-        cb  = get_param(blk, 'MaskCallbackString');
-        cbs = strsplit(cb, '|');
-        idx = find(contains(cbs, 'nominal_sink_detect'), 1);
-        if isempty(idx)
-            % Not a parameter callback — the button is a dialog control, so reach for
-            % its callback through the mask object instead.
-            mk  = Simulink.Mask.get(blk);
-            dc  = mk.getDialogControl('detectNames');
-            src = dc.Callback;
-        else
-            src = cbs{idx};
-        end
+        % Straight from the dialog control. MaskCallbackString would need splitting on
+        % '|', which mangles the '||' in the path-fix expression — and the button is a
+        % dialog control, so it is not in there anyway.
+        mk  = Simulink.Mask.get(blk);
+        src = mk.getDialogControl('detectNames').Callback;
 
         % gcb is what a real callback sees.
         evalCallback(blk, src);
@@ -145,6 +139,63 @@ function n = checkCallbackWithoutPath()
     end
 
     closeQuietly(model);
+end
+
+function n = checkSimWithoutPath()
+%CHECKSIMWITHOUTPATH  Running a model with neither folder on the path.
+%
+%   The failure this reproduces — "S-Function 'nominal_sink_sfun' does not exist" —
+%   appears only when the model is *run*, so fixing the mask callbacks did not catch it.
+%   A dragged-in block resolves its dialog fine and then fails at compile.
+
+    n = 0;
+    here   = fileparts(fileparts(mfilename('fullpath')));
+    blocks = fullfile(here, 'blocks');
+    oldDir = pwd;
+    model  = '';
+    restore = onCleanup(@() cleanupBoth(here, blocks, oldDir));
+
+    savedToken = getenv('NOMINAL_TOKEN');
+    setenv('NOMINAL_TOKEN', 'autonames-not-a-real-token');
+    tokenBack = onCleanup(@() setenv('NOMINAL_TOKEN', savedToken)); %#ok<NASGU>
+
+    try
+        [model, blk] = buildMux(true);
+        set_param(blk, 'channels', '''alpha, beta, gamma''', ...
+                       'datasetRid', '''ri.catalog.test.dataset.0''', ...
+                       'baseUrl', '''https://127.0.0.1:1''', ...
+                       'sampleTime', '0.01', 'capacityRows', '64');
+        set_param(model, 'StopTime', '0.03', 'SolverType', 'Fixed-step', ...
+                         'FixedStep', '0.01');
+
+        cd(tempdir);
+        rmpath(here);
+        if isfolder(blocks)
+            rmpath(blocks);
+        end
+        if ~isempty(which('nominal_sink_sfun'))
+            fprintf('FAIL: could not hide the S-function; test is meaningless\n');
+            closeQuietly(model);
+            n = 1;
+            return;
+        end
+
+        sim(model, 'StopTime', '0.03');
+        fprintf('ok:   a model runs with neither folder on the path\n');
+    catch err
+        fprintf('FAIL: running with neither folder on the path\n      %s\n', err.message);
+        n = 1;
+    end
+
+    closeQuietly(model);
+end
+
+function cleanupBoth(here, blocks, oldDir)
+    cd(oldDir);
+    addpath(here);
+    if isfolder(blocks)
+        addpath(blocks);
+    end
 end
 
 function cleanupPath(here, oldDir)

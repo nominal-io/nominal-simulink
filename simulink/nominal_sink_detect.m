@@ -8,16 +8,11 @@ function nominal_sink_detect(blk)
 %   See also NOMINAL_SINK_AUTONAMES
 
     try
-        names = nominal_sink_autonames(blk, true);
+        nominal_sink_autonames(blk, true);
     catch err
+        % Only failures get a dialog. On success the names appear in the field the user
+        % is already looking at, so a modal box restating them is just something else to
+        % dismiss.
         errordlg(err.message, 'Nominal Stream Sink', 'modal');
-        return;
     end
-
-    % Say what happened. The count is the useful part: it has to match the width of the
-    % signal being recorded, and seeing "4 channels" when you expected 3 is the whole
-    % point of showing it.
-    msgbox(sprintf('Detected %d channel(s):\n\n%s', numel(names), ...
-                   strjoin(names, sprintf('\n'))), ...
-           'Nominal Stream Sink', 'modal');
 end

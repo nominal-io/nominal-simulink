@@ -136,6 +136,11 @@ function make_library()
         '    disp(sprintf(''Nominal Stream Sink\n(direct)''));' newline ...
         'end'];
 
+    % Runs on every compile, so the S-function resolves even when the model was opened
+    % without the block's folders on the path. Callbacks alone were not enough: a
+    % missing MEX only shows up when the model is run.
+    m.Initialization = pathFixPrefix();
+
     % Apply it once now, so a freshly dragged block starts with the right fields greyed
     % rather than waiting for the user to touch the popup.
     nominal_sink_modecb(blockPath);
@@ -149,30 +154,43 @@ function make_library()
 end
 
 function prefix = pathFixPrefix()
-%PATHFIXPREFIX  Inline MATLAB prepended to every mask callback.
+%PATHFIXPREFIX  Inline MATLAB that puts the block's own folders on the MATLAB path.
 %
-%   The callbacks live beside the library, and that folder is not on the MATLAB path
-%   just because a block was dragged into a model. Without this, pressing a button in
-%   the dialog fails with "Undefined function 'nominal_sink_detect'", which tells the
-%   user nothing about what to do.
+%   Dragging a block into a model does not add the folder it came from to the path. Two
+%   things then break, and they break in different places:
 %
-%   So each callback first checks whether its target resolves, and if not, finds the
-%   library it was dragged from and adds that library's folder. The block links to
-%   nominal_lib, so ReferenceBlock names it and Simulink knows where the file is.
+%     the mask callbacks   "Undefined function 'nominal_sink_detect'"
+%     the S-function       "S-Function 'nominal_sink_sfun' does not exist"
+%
+%   The second only appears when the model is *run*, which is why fixing the callbacks
+%   alone was not enough. This runs as the mask Initialization as well as ahead of each
+%   callback, so it happens whenever the model compiles, however the block got there.
+%
+%   The block links to nominal_lib, so ReferenceBlock names the library and Simulink
+%   knows the file it came from — its folder holds the callbacks, and blocks/ beneath it
+%   holds the compiled S-function.
 %
 %   Written inline rather than as a helper function because a helper would have exactly
-%   the same problem it is solving — it would not be on the path either.
+%   the problem it is solving: it would not be on the path either.
 %
-%   nominal_setup remains for the cases this cannot cover, such as a model opened on a
-%   machine where the library was never loaded.
+%   The `which` guards make this a no-op once resolved, which matters because mask
+%   Initialization runs on every compile.
+%
+%   nominal_setup covers what this cannot, such as a model opened where the library was
+%   never loaded.
 
     prefix = [ ...
-        'if isempty(which(''nominal_sink_detect'')), ' ...
-            'rb = get_param(gcb, ''ReferenceBlock''); ' ...
-            'if ~isempty(rb), ' ...
-                'lib = strtok(rb, ''/''); ' ...
-                'if bdIsLoaded(lib), ' ...
-                    'addpath(fileparts(get_param(lib, ''FileName''))); ' ...
+        'if isempty(which(''nominal_sink_detect'')) || isempty(which(''nominal_sink_sfun'')), ' ...
+            'nm_rb = get_param(gcb, ''ReferenceBlock''); ' ...
+            'if ~isempty(nm_rb), ' ...
+                'nm_lib = strtok(nm_rb, ''/''); ' ...
+                'if bdIsLoaded(nm_lib), ' ...
+                    'nm_d = fileparts(get_param(nm_lib, ''FileName'')); ' ...
+                    'if ~isempty(nm_d), ' ...
+                        'if isempty(which(''nominal_sink_detect'')), addpath(nm_d); end, ' ...
+                        'nm_b = fullfile(nm_d, ''blocks''); ' ...
+                        'if isempty(which(''nominal_sink_sfun'')) && isfolder(nm_b), addpath(nm_b); end, ' ...
+                    'end, ' ...
                 'end, ' ...
             'end, ' ...
         'end, '];
