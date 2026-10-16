@@ -1,13 +1,15 @@
 function nominal_setup(save)
-%NOMINAL_SETUP  Put the Nominal Simulink block on the MATLAB path.
+%NOMINAL_SETUP  Use the Nominal blockset straight from a clone of this repository.
 %
-%   NOMINAL_SETUP        add the folders for this session
+%   NOMINAL_SETUP        add the blockset's folders for this session
 %   NOMINAL_SETUP(true)  add them and save, so they persist across restarts
 %
-%   Adds this folder, which holds the block library and its mask callbacks, and the
-%   blocks/ folder holding the compiled S-function.
+%   Installing the toolbox (.mltbx) does this for you; this is for working on the
+%   blockset itself. It adds the folders that installation would: library/ (the block
+%   library and slblocks.m, which lists it in the Library Browser), script/ (the mask
+%   callbacks), mex/ (the compiled S-function) and doc/ (the documentation).
 %
-%   The mask callbacks try to locate this folder themselves, so a block dragged from an
+%   The mask callbacks try to locate these folders themselves, so a block dragged from an
 %   open library usually works without running this. Use it when that fails — a model
 %   opened on a machine where the library was never opened, or one loaded by a script.
 %
@@ -18,28 +20,29 @@ function nominal_setup(save)
         save = false;
     end
 
-    here   = fileparts(mfilename('fullpath'));
-    blocks = fullfile(here, 'blocks');
+    root    = fullfile(fileparts(mfilename('fullpath')), 'blockset');
+    folders = fullfile(root, {'library', 'script', 'mex', 'doc'});
 
-    addpath(here);
-    if isfolder(blocks)
-        addpath(blocks);
-    else
-        warning('nominal:setup', ...
-                ['%s does not exist — the S-function has not been built. ' ...
-                 'Run `just build` first.'], blocks);
-    end
+    addpath(folders{:});
 
-    if exist(fullfile(here, 'nominal_lib.slx'), 'file') ~= 2
-        warning('nominal:setup', ...
-                ['nominal_lib.slx is missing — it is generated, not committed. ' ...
-                 'Run `just library` to create it.']);
+    % What a fresh clone is missing, and the recipe that makes each.
+    expected = {
+        fullfile(root, 'mex', ['nominal_sink_sfun.' mexext]), 'just build'
+        fullfile(root, 'library', 'nominal_lib.slx'),         'just library'
+        fullfile(root, 'doc', 'html', 'nominal_blockset.html'), 'just docs'
+    };
+    for i = 1:size(expected, 1)
+        if ~isfile(expected{i, 1})
+            warning('nominal:setup', '%s is missing — it is generated, not committed. Run `%s`.', ...
+                    expected{i, 1}, expected{i, 2});
+        end
     end
 
     if save
         savepath;
-        fprintf('Added to the MATLAB path and saved:\n  %s\n  %s\n', here, blocks);
+        fprintf('Added to the MATLAB path and saved:\n');
     else
-        fprintf('Added to the MATLAB path for this session:\n  %s\n  %s\n', here, blocks);
+        fprintf('Added to the MATLAB path for this session:\n');
     end
+    fprintf('  %s\n', folders{:});
 end

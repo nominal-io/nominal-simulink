@@ -4,16 +4,22 @@ Streams signals from a running Simulink model into Nominal, on the desktop and o
 Speedgoat real-time targets — QNX Neutrino for R2021a–R2025b, the Linux-based Antelope
 RTOS for R2026a and later.
 
-**[USING.md](USING.md) is the guide**: adding the block to a model, configuring it, and
-running the proxy.
+**[USING.md](USING.md) is the guide**: installing the blockset, configuring the block,
+and running the proxy.
+
+The block ships as a MATLAB toolbox, `NominalBlockset-<version>.mltbx`, for R2021b and
+later. Installing it puts the block in the Library Browser and its documentation in the
+Help browser.
 
 ## What is here
 
 ```
-cstream/     the C streaming library — standalone, no Simulink dependency
-simulink/    the Simulink block, its mask, and the library that holds it
-nmproxy/     the Go relay daemon, for hosts with no headroom to spare
-tools/       captures the golden protocol fixtures from the Rust client
+cstream/            the C streaming library — standalone, no Simulink dependency
+simulink/blockset/  the blockset exactly as it ships: library, callbacks, MEX, docs
+simulink/tools/     the scripts that generate the library, example, docs and toolbox
+simulink/src/       the S-function
+nmproxy/            the Go relay daemon, for hosts with no headroom to spare
+tools/              captures the golden protocol fixtures from the Rust client
 ```
 
 ## Two ways to send
@@ -54,10 +60,12 @@ writing it twice is how we find out whether it is.
 ## Building and testing
 
 ```powershell
-just build       # library, block, demo
-just library     # regenerate the Simulink block library
-just test        # C tests: encoder, ring buffer, frame codec
-just sim-test    # block tests: loads, sizes ports, steps, proxy mode
+just build         # library, block, demo
+just library       # regenerate the Simulink block library
+just package       # build the toolbox: build/NominalBlockset-<version>.mltbx
+just test          # C tests: encoder, ring buffer, frame codec
+just sim-test      # block tests, on the oldest and newest supported releases
+just install-test  # install the toolbox into a clean session and run the block from it
 ```
 
 None of the tests need a token or network access. See [USING.md](USING.md) for the

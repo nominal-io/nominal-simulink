@@ -42,11 +42,11 @@ endif()
 # non-keyword form, and CMake refuses to mix the two on one target.
 target_link_libraries(nominal_sink_sfun nominalstream)
 
-# Land the built block where the MATLAB path can see it, beside the .m files that
-# accompany it.
+# Land the built block in the blockset's mex/ folder, which is what ships in the toolbox.
+set(NM_BLOCKSET_MEX "${CMAKE_CURRENT_SOURCE_DIR}/blockset/mex")
 set_target_properties(nominal_sink_sfun PROPERTIES
-  RUNTIME_OUTPUT_DIRECTORY         "${CMAKE_CURRENT_SOURCE_DIR}/blocks"
-  RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/blocks"
-  LIBRARY_OUTPUT_DIRECTORY         "${CMAKE_CURRENT_SOURCE_DIR}/blocks"
-  LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_CURRENT_SOURCE_DIR}/blocks"
+  RUNTIME_OUTPUT_DIRECTORY         "${NM_BLOCKSET_MEX}"
+  RUNTIME_OUTPUT_DIRECTORY_RELEASE "${NM_BLOCKSET_MEX}"
+  LIBRARY_OUTPUT_DIRECTORY         "${NM_BLOCKSET_MEX}"
+  LIBRARY_OUTPUT_DIRECTORY_RELEASE "${NM_BLOCKSET_MEX}"
 )

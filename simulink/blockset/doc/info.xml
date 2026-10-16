@@ -1,0 +1,9 @@
+<productinfo xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+             xsi:noNamespaceSchemaLocation="optional">
+    <matlabrelease>R2021b</matlabrelease>
+    <name>Nominal Blockset</name>
+    <type>blockset</type>
+    <icon></icon>
+    <help_location>html</help_location>
+    <help_contents_icon></help_contents_icon>
+</productinfo>

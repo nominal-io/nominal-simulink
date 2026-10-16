@@ -9,37 +9,25 @@ that is driving real hardware is worse than losing telemetry.
 
 ---
 
-## 1. Build
+## 1. Install
 
-Once per machine, from the repository root:
+Open `NominalBlockset-<version>.mltbx` in MATLAB R2021b or later — double-click it, or:
 
-```powershell
-just build      # compiles the C library and the S-function
-just library    # generates simulink/nominal_lib.slx
+```matlab
+matlab.addons.install('NominalBlockset-0.1.0.mltbx')
 ```
 
-Requires a C compiler for MATLAB (`mex -setup C`), CMake, and vcpkg with
-`curl:x64-windows-static-md` installed. If MATLAB is somewhere unusual:
-
-```powershell
-just matlabroot='C:/Program Files/MATLAB/R2025b' build
-```
-
-`nominal_lib.slx` is generated rather than committed — it is a zipped binary, so keeping
-it out of version control keeps the block's definition somewhere a diff can review it.
-Re-run `just library` after pulling changes.
+That is all the setup there is. The block appears in the Library Browser under
+**Nominal**, its Help button opens its documentation, and the full documentation is in
+the Help browser under **Supplemental Software**. To build the toolbox yourself, see
+[Building from source](#8-building-from-source).
 
 ---
 
 ## 2. Put the block in a model
 
-```matlab
-cd C:\sw\nominal-simulink\simulink
-addpath(pwd, fullfile(pwd,'blocks'))
-open_system('nominal_lib')
-```
-
-Drag **Nominal Stream Sink** from the library window into your model.
+Open the Library Browser, expand **Nominal**, and drag **Nominal Stream Sink** into your
+model. Or type *Nominal* on the canvas and pick it from Quick Insert.
 
 Wire the signals you want to record into its single input. For more than one channel use
 a **Mux** — the input width must equal the number of channel names you configure, and
@@ -271,11 +259,12 @@ Each S-function callback then logs on entry, which narrows a fault to one of the
 ## 7. Checking the build
 
 ```powershell
-just test        # C library: encoder, ring buffer, frame codec
-just sim-test    # the block: loads, sizes its ports, steps, proxy mode
+just test          # C library: encoder, ring buffer, frame codec
+just sim-test      # the block, on R2021b and R2026a: ports, stepping, proxy, metadata
+just install-test  # install the packaged toolbox into a clean session and run it
 ```
 
-Neither needs a token or network access.
+None needs a token or network access.
 
 There is also a command-line streamer, useful for testing the path without Simulink:
 
@@ -283,3 +272,36 @@ There is also a command-line streamer, useful for testing the path without Simul
 .\build\cstream\Release\nmstream-demo.exe "<dataset RID>"                    # direct
 .\build\cstream\Release\nmstream-demo.exe -p 127.0.0.1:15400 "<dataset RID>" # via relay
 ```
+
+---
+
+## 8. Building from source
+
+Requires CMake, vcpkg with `curl:x64-windows-static-md` installed, and two MATLAB
+releases: the oldest supported (R2021b) builds what ships, because a library opens only
+in the release that saved it or later; R2026a packages it.
+
+```powershell
+just package    # MEX, library, example and docs, then build/NominalBlockset-<version>.mltbx
+```
+
+If MATLAB is somewhere unusual, override either root, forward slashes only:
+
+```powershell
+just oldestroot='D:/MATLAB/R2021b' matlabroot='D:/MATLAB/R2026a' package
+```
+
+Everything generated lands in `simulink/blockset/`, which is exactly what the toolbox
+contains. The `.slx` files and HTML are generated rather than committed — an `.slx` is a
+zipped binary, so keeping it out of version control keeps the block's definition
+somewhere a diff can review it.
+
+To use the blockset straight from a clone, without installing it:
+
+```matlab
+run('C:\sw\nominal-simulink\simulink\nominal_setup.m')
+```
+
+The version is set in `simulink/VERSION`. A Linux build of the toolbox, and a release,
+come from CI (`.github/workflows/blockset.yml`), which builds the Linux MEX and tests the
+installed toolbox on both platforms and both releases.

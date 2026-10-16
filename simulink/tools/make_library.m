@@ -6,18 +6,24 @@ function make_library()
 %   change would land as an opaque blob. Generating it from this script keeps the
 %   block's definition in readable source and makes the library a build artifact.
 %
-%   Run from this folder, or via `just library`.
+%   Run it with the oldest MATLAB the blockset supports. A library opens only in the
+%   release that saved it or a later one, so whichever release runs this sets the floor
+%   for everyone who installs the blockset.
+%
+%   Run via `just library`.
 
     libName  = 'nominal_lib';
     blockName = 'Nominal Stream Sink';
 
-    here = fileparts(mfilename('fullpath'));
-    target = fullfile(here, [libName '.slx']);
+    blockset = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'blockset');
+    target   = fullfile(blockset, 'library', [libName '.slx']);
+    version  = blocksetVersion();
 
     % The S-function must be resolvable, or Simulink cannot run mdlInitializeSizes and
     % the block keeps the default one-in-one-out shape — which then gets saved, so every
     % block dragged out shows an output port its checkbox says it does not have.
-    addpath(here, fullfile(here, 'blocks'));
+    addpath(fullfile(blockset, 'library'), fullfile(blockset, 'script'), ...
+            fullfile(blockset, 'mex'));
     if isempty(which('nominal_sink_sfun'))
         error('nominal:library', ...
               ['nominal_sink_sfun is not on the path. Build it first (`just build`); ' ...
@@ -40,6 +46,26 @@ function make_library()
     % set_param on its blocks, which is enough to make the port-sizing step below look
     % like it ran when it did not.
     set_param(libName, 'Lock', 'off');
+
+    % --- library metadata -------------------------------------------------------
+    %
+    % The Library Browser lists a library only if this is on when it is saved. slblocks.m
+    % beside the .slx is the other half.
+    set_param(libName, 'EnableLBRepository', 'on');
+
+    % Pinned rather than left to auto-increment. The library is rebuilt from nothing on
+    % every run, so an auto-incremented version would read 1.0 forever, and forwarding
+    % table entries keyed on a version would have nothing to compare against.
+    set_param(libName, 'ModelVersionFormat', sprintf('%d.%d', version(1), version(2)));
+
+    % Renames, moves and parameter changes are carried across to users' saved models by
+    % this table. It is empty until the first such change ships; see forwarding_table.
+    set_param(libName, 'ForwardingTable', forwarding_table());
+
+    % Instances cannot have their link disabled. A disabled link is a private fork of the
+    % block that silently stops receiving fixes, which for a block that talks to a server
+    % is how a protocol change strands someone.
+    set_param(libName, 'LockLinksToLibrary', 'on');
 
     blockPath = [libName '/' blockName];
     add_block('built-in/S-Function', blockPath);
@@ -75,6 +101,16 @@ function make_library()
     % .slx, so a token entered here would be a credential committed to a model file.
     % The block reads NOMINAL_TOKEN from the environment instead.
     m = Simulink.Mask.create(blockPath);
+
+    % The type titles the dialog, and is what nominal_help keys a block's page on.
+    m.Type = blockName;
+
+    % Simulink runs the first line of the help text when it is an eval(...) command, which
+    % lets the page be found at click time. The install folder is unknown here, and differs
+    % between an installed toolbox and a clone. The path fix runs first because Help is
+    % one more callback that fails when the block's folders are off the path.
+    m.Help = ['eval(''' strrep([pathFixPrefix() 'nominal_help(gcb);'], '''', '''''') ''')'];
+
     m.Description = [ ...
         'Streams the input vector to a Nominal dataset while the model runs.' newline newline ...
         'One element per channel, in the order the channel names are listed. ' ...
@@ -202,12 +238,27 @@ function make_library()
                'run.'], ports(2));
     end
 
+    % Quick Insert: typing any of these on the canvas offers the block.
+    set_param(blockPath, 'BlockKeywords', ["Nominal", "stream", "telemetry"]);
+
     % --- save -------------------------------------------------------------------
     set_param(libName, 'Lock', 'off');
     save_system(libName, target);
     close_system(libName, 0);
 
-    fprintf('wrote %s (%d in, %d out)\n', target, ports(1), ports(2));
+    fprintf('wrote %s, version %d.%d (%d in, %d out)\n', ...
+            target, version(1), version(2), ports(1), ports(2));
+end
+
+function v = blocksetVersion()
+%BLOCKSETVERSION  [major minor patch] from simulink/VERSION, the one place it is set.
+    file = fullfile(fileparts(fileparts(mfilename('fullpath'))), 'VERSION');
+    text = strtrim(fileread(file));
+    tok  = regexp(text, '^(\d+)\.(\d+)\.(\d+)$', 'tokens', 'once');
+    if isempty(tok)
+        error('nominal:library', '%s should hold major.minor.patch, not "%s"', file, text);
+    end
+    v = str2double(tok);
 end
 
 function prefix = pathFixPrefix()
@@ -224,8 +275,11 @@ function prefix = pathFixPrefix()
 %   callback, so it happens whenever the model compiles, however the block got there.
 %
 %   The block links to nominal_lib, so ReferenceBlock names the library and Simulink
-%   knows the file it came from — its folder holds the callbacks, and blocks/ beneath it
-%   holds the compiled S-function.
+%   knows the file it came from. That file sits in the blockset's library/ folder, with
+%   the callbacks in script/ and the compiled S-function in mex/ beside it.
+%
+%   An installed toolbox puts all three on the path itself, so there this does nothing.
+%   It matters when running from a clone.
 %
 %   Written inline rather than as a helper function because a helper would have exactly
 %   the problem it is solving: it would not be on the path either.
@@ -242,11 +296,12 @@ function prefix = pathFixPrefix()
             'if ~isempty(nm_rb), ' ...
                 'nm_lib = strtok(nm_rb, ''/''); ' ...
                 'if bdIsLoaded(nm_lib), ' ...
-                    'nm_d = fileparts(get_param(nm_lib, ''FileName'')); ' ...
+                    'nm_d = fileparts(fileparts(get_param(nm_lib, ''FileName''))); ' ...
                     'if ~isempty(nm_d), ' ...
-                        'if isempty(which(''nominal_sink_detect'')), addpath(nm_d); end, ' ...
-                        'nm_b = fullfile(nm_d, ''blocks''); ' ...
-                        'if isempty(which(''nominal_sink_sfun'')) && isfolder(nm_b), addpath(nm_b); end, ' ...
+                        'nm_s = fullfile(nm_d, ''script''); ' ...
+                        'if isempty(which(''nominal_sink_detect'')) && isfolder(nm_s), addpath(nm_s); end, ' ...
+                        'nm_m = fullfile(nm_d, ''mex''); ' ...
+                        'if isempty(which(''nominal_sink_sfun'')) && isfolder(nm_m), addpath(nm_m); end, ' ...
                     'end, ' ...
                 'end, ' ...
             'end, ' ...

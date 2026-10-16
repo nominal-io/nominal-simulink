@@ -15,8 +15,16 @@ vcpkg  := replace(env_var_or_default("VCPKG_ROOT", "C:/tools/vcpkg"), "\\", "/")
 triplet := env_var_or_default("VCPKG_TRIPLET", "x64-windows-static-md")
 
 # MATLAB is often not on PATH. Override with the install root, forward slashes only:
-#   just matlabroot='C:/Program Files/MATLAB/R2025b' build
-matlabroot := env_var_or_default("MATLABROOT", "C:/Program Files/MATLAB/R2026a")
+#   just matlabroot='C:/Program Files/MATLAB/R2025b' sim-test
+#
+# Two releases, with different jobs. The oldest one the blockset supports builds
+# everything that ships: a library opens only in the release that saved it or a later
+# one, and a MEX built against an older release loads in newer ones but not the
+# reverse. The newest runs the tooling that needs it — packaging needs R2023a+, and
+# code generation needs Simulink Coder, which is only installed there.
+oldestroot := env("MATLAB_OLDEST", "C:/Program Files/MATLAB/R2021b")
+matlabroot := env("MATLABROOT", "C:/Program Files/MATLAB/R2026a")
+oldest     := oldestroot + "/bin/matlab.exe"
 matlab     := matlabroot + "/bin/matlab.exe"
 
 config  := "Release"
@@ -30,7 +38,7 @@ configure:
     cmake -S . -B {{builddir}} \
       -DCMAKE_TOOLCHAIN_FILE={{vcpkg}}/scripts/buildsystems/vcpkg.cmake \
       -DVCPKG_TARGET_TRIPLET={{triplet}} \
-      -DMatlab_ROOT_DIR="{{matlabroot}}"
+      -DMatlab_ROOT_DIR="{{oldestroot}}"
 
 # Build the library, demo and tests
 build: configure
@@ -66,11 +74,31 @@ frames: build
 
 # Regenerate the Simulink library holding the masked sink block
 library: build
-    "{{matlab}}" -batch "cd simulink; make_library"
+    "{{oldest}}" -batch "addpath('simulink/tools'); make_library"
 
-# Load the block and step a model without touching the network
+# Regenerate the example model the documentation opens
+example: library
+    "{{oldest}}" -batch "addpath('simulink/tools'); make_example"
+
+# Regenerate the HTML documentation. Each release builds the search index it reads.
+docs:
+    "{{oldest}}" -batch "addpath('simulink/tools'); make_docs"
+    "{{matlab}}" -batch "addpath('simulink/tools'); make_docs"
+
+# Build the toolbox installer, build/NominalBlockset-<version>.mltbx
+package: example docs
+    "{{matlab}}" -batch "addpath('simulink/tools'); package_blockset"
+
+# Install the package into a clean session on both releases, check the block works from
+# it, and uninstall it again
+install-test:
+    "{{oldest}}" -batch "addpath('simulink/tests'); assertSuccess(runtests('InstalledToolboxTest'))"
+    "{{matlab}}" -batch "addpath('simulink/tests'); assertSuccess(runtests('InstalledToolboxTest'))"
+
+# Load the block and step a model without touching the network, on both releases
 sim-test: build library
-    "{{matlab}}" -batch "cd simulink; addpath(pwd, fullfile(pwd,'blocks'), fullfile(pwd,'tests')); blocksmoke; autonames_test"
+    "{{oldest}}" -batch "addpath('simulink/tests'); assertSuccess(runtests({'SinkBlockTest', 'AutonamesTest', 'LibraryMetadataTest'}))"
+    "{{matlab}}" -batch "addpath('simulink/tests'); assertSuccess(runtests({'SinkBlockTest', 'AutonamesTest', 'LibraryMetadataTest'}))"
 
 # Check the MATLAB frame decoder against the same fixtures as the C and Go ones
 matlab-test:
@@ -84,9 +112,12 @@ matlab-test:
 matlab-proxy port="15400":
     "{{matlab}}" -batch "addpath('matlab'); nmproxy_reference('Port', {{port}})"
 
-# Delete the build tree and the built block
+# Delete the build tree and everything generated into the blockset
 clean:
-    rm -rf {{builddir}} simulink/blocks
+    rm -rf {{builddir}} simulink/blockset/mex/*.mex* simulink/blockset/library/*.slx \
+      simulink/blockset/examples simulink/blockset/doc/html simulink/blockset/doc/helptoc.xml \
+      simulink/blockset/doc/helpsearch-* simulink/blockset/script/Contents.m \
+      simulink/blockset/codegen
 
 # Show what is available
 help:
