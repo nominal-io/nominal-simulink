@@ -16,7 +16,7 @@ import (
 // retries — all of it here rather than on the machine running the model.
 //
 // Deliberately built on nominal-streaming-go rather than reimplementing the write path.
-// The frame format between host and relay is ours and had to be written three times; the
+// The frame format between host and relay is ours and had to be written three times. The
 // Nominal protocol is not, and one maintained implementation is better than a second
 // hand-rolled one.
 type NominalWriter struct {
@@ -54,6 +54,7 @@ func (w *NominalWriter) Open(datasetRID string, channels []string, onError func(
 		channels: make([]*nominal.ChannelStream[float64], len(channels)),
 		log:      w.log,
 		onError:  onError,
+		drained:  make(chan struct{}),
 	}
 
 	// One typed stream per channel, resolved once. Frames carry channel *indices*, so
@@ -62,10 +63,11 @@ func (w *NominalWriter) Open(datasetRID string, channels []string, onError func(
 		s.channels[i] = ds.FloatStream(name)
 	}
 
-	// The client reports asynchronously. Without draining this the channel fills and
-	// the client blocks, so a failure to write would eventually become a failure to
-	// receive — the proxy would go quiet rather than complain.
+	// The client reports write failures on errCh and drops the oldest when it is full.
+	// Draining errCh here is the only way those failures reach write_errors and the log.
+	// The client closes errCh at the end of Close, which ends this goroutine.
 	go func() {
+		defer close(s.drained)
 		for err := range errCh {
 			s.recordError(err)
 		}
@@ -91,6 +93,7 @@ type nominalStream struct {
 	channels []*nominal.ChannelStream[float64]
 	log      *slog.Logger
 	onError  func(error)
+	drained  chan struct{} // closed once every error the client reported is recorded
 
 	mu       sync.Mutex
 	errCount uint64
@@ -110,9 +113,18 @@ func (s *nominalStream) Push(timestampNanos int64, values []float64) error {
 }
 
 func (s *nominalStream) Close() error {
-	// Blocks until everything queued has been sent, which is what makes an evicted or
-	// shut-down stream still land its data.
+	// Blocks until the final batch has been sent, which is what makes an evicted or
+	// shut-down stream still send its data.
 	err := s.ds.Close()
+
+	// Errors the client reported before Close can still be waiting in errCh. Wait for
+	// the drain so they are counted before choosing which line to log.
+	//
+	// The client discards errors from batches that finish after Close starts, including
+	// the final one, so a failure of that batch still goes unreported here and the line
+	// below can say "stream closed". nominal-streaming-go has to deliver those errors on
+	// errCh before closing it for nmproxy to count them.
+	<-s.drained
 
 	s.mu.Lock()
 	n, last := s.errCount, s.lastErr

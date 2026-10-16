@@ -90,8 +90,9 @@ func run(configPath string) error {
 		return err
 	}
 
-	// Flush before reporting, so the totals and the moment of the log line both reflect
-	// every stream having been written out. The deferred Close is then a no-op.
+	// Flush every stream before logging the totals, so the line appears only once the
+	// final batches have been sent. The client discards errors from those batches, so
+	// write_errors does not include them. The deferred Close is then a no-op.
 	server.Close()
 
 	st := registry.Stats()
@@ -123,9 +124,8 @@ func usage() {
 Usage:
   nmproxy -config /etc/nominal/nmproxy.yaml
 
-Configuration is a file, not environment variables: a daemon's settings outlive the
-shell that started it, and a file can be inspected, diffed and referenced from a
-service unit. Start from nmproxy.example.yaml.
+Settings come from the file given by -config. Start from nmproxy.example.yaml, which
+ships with nmproxy.
 
 Flags:
 `)

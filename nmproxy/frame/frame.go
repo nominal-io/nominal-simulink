@@ -8,8 +8,8 @@
 // That is the point. A protocol meant to be implemented by third parties — in LabVIEW,
 // in Python, in whatever a customer already runs — has to be followable from its
 // specification alone. Writing it twice is how we find out whether it is, and it already
-// paid for itself: the C side's config_id hash had a transcribed digit missing, which
-// only a second implementation using the real FNV-1a constant would have exposed.
+// paid for itself: the C side's config_id hash had a transcribed digit missing, which a
+// second implementation using the real FNV-1a constant exposed.
 package frame
 
 import (
@@ -25,7 +25,7 @@ import (
 //
 // A byte sequence rather than an integer: written as a little-endian uint32 it would
 // appear as "1SMN" in a packet capture, and being recognisable in tcpdump is a magic
-// number's entire purpose.
+// number's main job.
 var Magic = [4]byte{'N', 'M', 'S', '1'}
 
 const (
@@ -97,9 +97,9 @@ type Row struct {
 //
 // FNV-1a over each field length-prefixed as a 4-byte little-endian count followed by
 // its bytes. The length prefixes are what stop {"ab","c"} and {"a","bc"} colliding.
-// Any implementation that computes a different value here will have every DATA frame
-// rejected as an unknown config, with no error anywhere — so this must match the C
-// side exactly, and the fixture test is what guarantees it.
+// A sender that computes a different value has its HELLO rejected with a warning, and
+// every DATA frame is dropped as an unknown config. This must match the C side exactly.
+// The fixture test checks it.
 func ConfigID(datasetRID string, channels []string) uint64 {
 	h := fnv.New64a()
 	writeField(h, datasetRID)

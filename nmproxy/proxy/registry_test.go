@@ -2,14 +2,17 @@ package proxy
 
 import (
 	"bufio"
+	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -17,9 +20,9 @@ import (
 )
 
 // Frames come from the C encoder's fixtures rather than a Go encoder, because the proxy
-// never encodes — building an encoder here purely for tests would be a third
-// implementation to keep correct for no benefit. Where a test needs a different
-// sequence number it rewrites those eight bytes in place.
+// never encodes — a Go encoder written only for tests would be one more implementation
+// to keep correct. A test that needs another sequence number uses withSequence, which
+// copies the DATA fixture and overwrites its 8-byte sequence field.
 const fixturePath = "../../cstream/tests/fixtures/frames.txt"
 
 const fixtureRID = "ri.catalog.test.dataset.abc"
@@ -57,8 +60,72 @@ func withSequence(data []byte, seq uint64) []byte {
 	return out
 }
 
+// withRID returns a copy of a HELLO frame for another dataset, with its config_id
+// recomputed so the proxy accepts it. The new RID must be as long as the old one, so the
+// frame's lengths stay valid.
+func withRID(t *testing.T, hello []byte, rid string) []byte {
+	t.Helper()
+	if len(rid) != len(fixtureRID) {
+		t.Fatalf("withRID needs a %d-byte RID, got %q", len(fixtureRID), rid)
+	}
+	h, err := frame.DecodeHello(hello)
+	if err != nil {
+		t.Fatalf("decoding the HELLO fixture: %v", err)
+	}
+	out := make([]byte, len(hello))
+	copy(out, hello)
+	// The RID follows the header and its own 2-byte length.
+	copy(out[frame.HeaderBytes+2:], rid)
+	binary.LittleEndian.PutUint64(out[16:24], frame.ConfigID(rid, h.Channels))
+	return out
+}
+
 func quietLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+}
+
+// logRecorder is a slog handler that keeps every message, so a test can count how often
+// a line was logged.
+type logRecorder struct {
+	mu   sync.Mutex
+	msgs []string
+}
+
+func (l *logRecorder) Enabled(context.Context, slog.Level) bool { return true }
+func (l *logRecorder) WithAttrs([]slog.Attr) slog.Handler       { return l }
+func (l *logRecorder) WithGroup(string) slog.Handler            { return l }
+
+func (l *logRecorder) Handle(_ context.Context, r slog.Record) error {
+	l.mu.Lock()
+	l.msgs = append(l.msgs, r.Message)
+	l.mu.Unlock()
+	return nil
+}
+
+// count reports how many logged messages start with prefix.
+func (l *logRecorder) count(prefix string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, m := range l.msgs {
+		if strings.HasPrefix(m, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// countExact reports how many logged messages are exactly msg.
+func (l *logRecorder) countExact(msg string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, m := range l.msgs {
+		if m == msg {
+			n++
+		}
+	}
+	return n
 }
 
 func newTestRegistry(t *testing.T, cfg Config) (*Registry, *LogWriter) {
@@ -177,7 +244,7 @@ func TestSequenceGapsAndReordering(t *testing.T) {
 			if st.Reorders != tc.wantReorders {
 				t.Errorf("reorders=%d, want %d", st.Reorders, tc.wantReorders)
 			}
-			// Every frame carries rows regardless of ordering: a reordered frame's
+			// Every frame's rows are written regardless of order: a reordered frame's
 			// data is still good, and dropping it would turn a harmless network
 			// artifact into real loss.
 			if wantRows := len(tc.sequences) * 3; int(st.Rows) != wantRows {
@@ -201,6 +268,50 @@ func TestAllowlistRefusesUnlistedDatasets(t *testing.T) {
 	}
 	if st := r.Stats(); st.Refused != 1 {
 		t.Errorf("refused=%d, want 1", st.Refused)
+	}
+}
+
+// Every refused dataset is named once, not only the first one the proxy ever saw, and
+// not once per HELLO.
+func TestRefusedDatasetsAreLoggedOncePerRID(t *testing.T) {
+	rec := &logRecorder{}
+	r := NewRegistry(&LogWriter{Log: quietLogger()}, Config{
+		IdleTimeout:     time.Minute,
+		AllowedDatasets: []string{"ri.catalog.test.dataset.something-else"},
+	}, slog.New(rec))
+	now := time.Now()
+
+	abc := loadFixture(t, "hello")
+	xyz := withRID(t, abc, "ri.catalog.test.dataset.xyz")
+	for i := 0; i < 3; i++ {
+		r.Handle(abc, now)
+		r.Handle(xyz, now)
+	}
+
+	if got := rec.count("refusing a dataset"); got != 2 {
+		t.Errorf("logged %d refusals for 2 datasets, want 2", got)
+	}
+	if st := r.Stats(); st.Refused != 6 {
+		t.Errorf("refused=%d, want 6", st.Refused)
+	}
+}
+
+// Any sender can invent RIDs, so the number named in the log is capped.
+func TestRefusedDatasetLoggingIsCapped(t *testing.T) {
+	rec := &logRecorder{}
+	r := NewRegistry(&LogWriter{Log: quietLogger()}, Config{
+		IdleTimeout:     time.Minute,
+		AllowedDatasets: []string{"ri.catalog.test.dataset.something-else"},
+	}, slog.New(rec))
+	now := time.Now()
+
+	hello := loadFixture(t, "hello")
+	for i := 0; i < maxRefusedRIDsLogged+20; i++ {
+		r.Handle(withRID(t, hello, fmt.Sprintf("ri.catalog.test.dataset.%03d", i)), now)
+	}
+
+	if got := rec.count("refusing a dataset"); got != maxRefusedRIDsLogged {
+		t.Errorf("logged %d refusals, want the cap of %d", got, maxRefusedRIDsLogged)
 	}
 }
 

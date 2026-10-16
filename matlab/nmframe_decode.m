@@ -15,7 +15,8 @@ function frame = nmframe_decode(bytes)
 %       .channels    cellstr, in order
 %
 %   DATA adds:
-%       .sequence    uint64, per-session and monotonic; gaps are loss
+%       .sequence    uint64, increases by one per DATA frame within a session. A
+%                    skipped value means a frame was lost or is arriving late.
 %       .timestamps  int64 column, nanoseconds since the Unix epoch
 %       .values      double matrix, one row per sample, one column per channel
 %
@@ -47,7 +48,8 @@ function frame = nmframe_decode(bytes)
         % tell the sender, so without saying this out loud a version mismatch is
         % indistinguishable from a network fault.
         error('nmframe:version', ...
-              'frame is protocol version %d, this decoder speaks %d', bytes(5), VERSION);
+              'frame is protocol version %d but this decoder supports version %d', ...
+              bytes(5), VERSION);
     end
 
     frame = struct();
@@ -94,9 +96,8 @@ function [frame, at] = decodeData(frame, bytes, at)
         error('nmframe:malformed', 'DATA declares %d channels and %d rows', nch, rows);
     end
 
-    % Check the whole body is present before reading any of it. A length field claiming
-    % more than the datagram carries is the obvious way to walk a decoder off the end of
-    % a buffer, and it is the first thing a hostile sender would try.
+    % Check the whole body is present before reading or allocating it, so an inflated
+    % count raises a clear error rather than an index error or a huge zeros() allocation.
     rowBytes = 8 + 8 * double(nch);
     need = double(rows) * rowBytes;
     if at + need - 1 > numel(bytes)
@@ -121,7 +122,7 @@ end
 % ------------------------------------------------------------------ readers
 %
 % Every read is bounds-checked against what actually arrived. typecast reinterprets
-% bytes in the host's byte order, and the format is little-endian; every platform MATLAB
+% bytes in the host's byte order, and the format is little-endian. Every platform MATLAB
 % runs on is little-endian, so these agree. A big-endian host would need the bytes
 % reversed first.
 

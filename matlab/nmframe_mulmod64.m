@@ -8,8 +8,8 @@ function r = nmframe_mulmod64(a, b)
 %
 %   A hash written the obvious way — h = h * PRIME — therefore pegs at the maximum on
 %   the first multiply and stays there, producing a stable, plausible, and completely
-%   wrong value that agrees with no other implementation. This is the single most likely
-%   way to get FNV-1a wrong in MATLAB, and it fails silently.
+%   wrong value that agrees with no other implementation. This is an easy way to get
+%   FNV-1a wrong in MATLAB, and it fails without an error.
 %
 %   So the multiply is done on 16-bit limbs in double precision. Every partial product
 %   is at most (2^16-1)^2, just under 2^32, and every accumulator stays under about

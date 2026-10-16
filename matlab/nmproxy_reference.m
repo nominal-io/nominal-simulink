@@ -1,21 +1,27 @@
 function stats = nmproxy_reference(varargin)
-%NMPROXY_REFERENCE  A readable proxy: receive frames, decode them, report what arrived.
+%NMPROXY_REFERENCE  A readable relay: receive frames, decode them, report what arrived.
 %
-%   NMPROXY_REFERENCE() listens on 127.0.0.1:15400 until you press Ctrl-C.
-%   NMPROXY_REFERENCE('Port', 15400, 'Seconds', 30, 'Verbose', true)
-%   stats = NMPROXY_REFERENCE(...) returns counts when it stops.
+%   NMPROXY_REFERENCE() listens on UDP port 15400 on every network interface until you
+%   press Ctrl-C.
+%   NMPROXY_REFERENCE('Port', P) listens on port P instead.
+%   NMPROXY_REFERENCE('Seconds', S) stops after S seconds. 0, the default, runs until
+%   Ctrl-C.
+%   NMPROXY_REFERENCE('Verbose', true) also prints the first row of each DATA frame.
+%   stats = NMPROXY_REFERENCE('Seconds', S, ...) returns the counts after S seconds.
+%   Ctrl-C stops it without returning them.
 %
-%   This exists to be read. The production relay is nmproxy (Go): it writes to Nominal,
-%   handles many concurrent sessions, and runs as a service. This one writes nothing —
-%   it decodes frames and prints what it sees, which is enough to answer "is the model
-%   actually sending, and does the data look right?" and enough to show anyone
-%   implementing a proxy in another language what the job involves.
+%   This exists to be read. The production relay is nmproxy (Go): it writes to Nominal
+%   and runs as a service. This one writes nothing — it decodes frames and prints what
+%   it sees, which is enough to answer "is the model actually sending, and does the data
+%   look right?" and enough to show anyone implementing a relay in another language what
+%   the job involves.
 %
 %   Uses java.net.DatagramSocket rather than udpport, so it needs no Instrument Control
 %   Toolbox — stock MATLAB is enough.
 %
-%   To turn it into something that writes, replace the marked section with a call to
-%   whichever client you use. Everything before that point is the protocol.
+%   To turn it into something that writes, replace the section marked "where a real
+%   relay would write" with a call to whichever client you use. Everything before that
+%   point is the protocol.
 %
 %   See also NMFRAME_DECODE, NMFRAME_CONFIGID
 
@@ -26,7 +32,7 @@ function stats = nmproxy_reference(varargin)
     sock.setSoTimeout(200);
     closer = onCleanup(@() sock.close()); %#ok<NASGU>
 
-    fprintf('listening on udp/%d — Ctrl-C to stop\n', opts.Port);
+    fprintf('listening on UDP port %d on every interface. Press Ctrl-C to stop.\n', opts.Port);
 
     buf = zeros(1, 2048, 'int8');
     pkt = java.net.DatagramPacket(buf, numel(buf));
@@ -34,7 +40,7 @@ function stats = nmproxy_reference(varargin)
     configs  = containers.Map('KeyType', 'char', 'ValueType', 'any');
     sessions = containers.Map('KeyType', 'char', 'ValueType', 'any');
     stats    = struct('rows', 0, 'gaps', 0, 'reorders', 0, ...
-                      'unknownConfig', 0, 'badFrames', 0);
+                      'unknownConfig', 0, 'badFrames', 0, 'wrongVersion', 0);
 
     started  = tic;
     lastLog  = tic;
@@ -47,10 +53,13 @@ function stats = nmproxy_reference(varargin)
         pkt.setLength(numel(buf));
         try
             sock.receive(pkt);
-        catch
-            % Timed out with nothing to read. Not an error — it is how the loop stays
-            % interruptible.
-            continue;
+        catch err
+            % A timeout is how the loop stays interruptible, so it is not an error.
+            % Anything else, such as a closed socket, is.
+            if isTimeout(err)
+                continue;
+            end
+            rethrow(err);
         end
 
         n     = pkt.getLength();
@@ -61,25 +70,35 @@ function stats = nmproxy_reference(varargin)
             frame = nmframe_decode(bytes);
         catch err
             % Anything that can reach this port can send rubbish, so a bad datagram is
-            % a counter, never a reason to stop.
-            stats.badFrames = stats.badFrames + 1;
-            if stats.badFrames == 1
-                fprintf('rejected a frame: %s\n', err.message);
+            % a counter, never a reason to stop. A version mismatch is counted on its own
+            % and its first one reported, because the sender gets no reply to tell it.
+            if strcmp(err.identifier, 'nmframe:version')
+                stats.wrongVersion = stats.wrongVersion + 1;
+                if stats.wrongVersion == 1
+                    fprintf('rejecting frames that use another protocol version: %s\n', ...
+                            err.message);
+                end
+            else
+                stats.badFrames = stats.badFrames + 1;
+                if stats.badFrames == 1
+                    fprintf('rejected a frame: %s\n', err.message);
+                end
             end
             continue;
         end
 
-        % Hex, not sprintf('%d', ...). MATLAB renders a uint64 above about 2^53 in
-        % scientific notation under %d, which both looks wrong and — because these
-        % strings are map keys — would let two distinct ids collide on one entry.
+        % Hex, not sprintf('%d', ...). Under %d, MATLAB prints a large uint64 such as
+        % intmax('uint64') in scientific notation (1.844674e+19), which both looks wrong
+        % and — because these strings are map keys — would let two distinct ids collide
+        % on one entry.
         key = idKey(frame.configId);
 
         switch frame.type
             case 'hello'
                 if ~configs.isKey(key)
-                    % Optional but worth doing once: if the sender's hash disagrees with
-                    % ours, every DATA frame would be discarded as an unknown
-                    % configuration and nothing would ever explain why.
+                    % Optional but worth doing once. Without this check a sender whose
+                    % hash disagrees with ours would work here, because configs are
+                    % keyed by the id the HELLO claims, but nmproxy would reject it.
                     if ~isequal(nmframe_configid(frame.datasetRid, frame.channels), frame.configId)
                         fprintf(['HELLO config_id does not match its contents — ' ...
                                  'the sender''s hash disagrees with ours\n']);
@@ -94,8 +113,8 @@ function stats = nmproxy_reference(varargin)
 
             case 'data'
                 if ~configs.isKey(key)
-                    % Normal after a restart, and self-correcting: the host repeats
-                    % HELLO about once a second.
+                    % Normal for up to a second after a restart, until the host repeats
+                    % HELLO. DATA whose HELLO failed the config_id check also lands here.
                     stats.unknownConfig = stats.unknownConfig + 1;
                     continue;
                 end
@@ -126,12 +145,12 @@ function stats = nmproxy_reference(varargin)
                 sessions(skey) = s; %#ok<NASGU>
                 stats.rows  = stats.rows + size(frame.values, 1);
 
-                % --- where a real proxy would write -----------------------------
+                % --- where a real relay would write -----------------------------
                 %
-                % cfg.channels are the channel names in order; frame.values has one
-                % column per channel and one row per sample; frame.timestamps holds the
-                % matching nanoseconds since the epoch. Hand those to whichever client
-                % you use. nmproxy does exactly this against nominal-streaming-go.
+                % cfg.channels are the channel names in order. frame.values has one
+                % column per channel and one row per sample, and frame.timestamps holds
+                % the matching nanoseconds since the epoch. Hand those to whichever
+                % client you use. nmproxy does exactly this against nominal-streaming-go.
                 if opts.Verbose
                     fprintf('  seq %6d  %d rows  first: t=%d  [%s]\n', ...
                             frame.sequence, size(frame.values, 1), ...
@@ -152,6 +171,12 @@ end
 
 % ------------------------------------------------------------------ helpers
 
+function tf = isTimeout(err)
+%ISTIMEOUT  True if err is the receive timeout set with setSoTimeout.
+    tf = isa(err, 'matlab.exception.JavaException') && ...
+         isa(err.ExceptionObject, 'java.net.SocketTimeoutException');
+end
+
 function s = idKey(v)
 %IDKEY  A 64-bit id as an exact hex string, for map keys and for printing.
     s = lower(dec2hex(v, 16));
@@ -167,7 +192,8 @@ function opts = parseArgs(varargin)
 end
 
 function printStats(stats, nConfigs, nSessions)
-    fprintf('configs=%d sessions=%d rows=%d gaps=%d reorders=%d unknown_config=%d bad_frames=%d\n', ...
+    fprintf(['configs=%d sessions=%d rows=%d gaps=%d reorders=%d unknown_config=%d ' ...
+             'bad_frames=%d wrong_version=%d\n'], ...
             nConfigs, nSessions, stats.rows, stats.gaps, stats.reorders, ...
-            stats.unknownConfig, stats.badFrames);
+            stats.unknownConfig, stats.badFrames, stats.wrongVersion);
 end

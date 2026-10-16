@@ -29,12 +29,11 @@ func NewServer(cfg Config, registry *Registry, log *slog.Logger) (*Server, error
 		return nil, fmt.Errorf("listening on %q: %w", cfg.Listen, err)
 	}
 
-	// Generous receive buffer. The kernel drops datagrams silently once this fills,
-	// and those drops are invisible to us — they do not even appear as sequence gaps
-	// until the next frame arrives. Buying headroom here is much cheaper than
-	// diagnosing loss later.
+	// Generous receive buffer. The kernel drops datagrams without notice once this
+	// fills, and the proxy sees that loss only as a sequence gap when a later frame
+	// arrives. Buying headroom here is much cheaper than diagnosing loss later.
 	if err := conn.SetReadBuffer(8 << 20); err != nil {
-		log.Warn("could not enlarge the receive buffer; bursts may be dropped by the kernel",
+		log.Warn("could not enlarge the receive buffer, so the operating system may drop bursts of frames",
 			"error", err)
 	}
 
@@ -46,7 +45,7 @@ func (s *Server) LocalAddr() net.Addr { return s.conn.LocalAddr() }
 // Run receives until the context is cancelled.
 //
 // Single-threaded on purpose. One goroutine reading a socket keeps frames from a session
-// in arrival order, which matters because sequence gap detection assumes it; a worker
+// in arrival order, which matters because sequence gap detection assumes it. A worker
 // pool would manufacture reordering that never happened on the wire. If one core ever
 // becomes the bottleneck, the fix is SO_REUSEPORT with a socket per worker, which
 // preserves per-flow ordering — not a shared queue.
@@ -58,7 +57,7 @@ func (s *Server) Run(ctx context.Context) error {
 
 	go func() {
 		<-ctx.Done()
-		// Unblocks ReadFromUDP; there is no other way to interrupt it.
+		// Closing the socket unblocks ReadFromUDP.
 		_ = s.conn.Close()
 	}()
 
@@ -67,8 +66,8 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	go s.sweep(ctx)
 
-	// One unreadable datagram is no reason to stop serving every other sender. A socket
-	// that fails every read is, so a long enough run of failures still ends the relay.
+	// One unreadable datagram should not stop the relay for every other sender. A socket
+	// that fails every read should, so 100 failures in a row end the relay.
 	const maxConsecutiveFailures = 100
 	failures := 0
 

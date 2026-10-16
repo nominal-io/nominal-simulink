@@ -11,22 +11,21 @@ function id = nmframe_configid(datasetRid, channels)
 %       h = 0xcbf29ce484222325
 %       for each byte b:  h = (h XOR b) * 0x100000001b3   (mod 2^64)
 %
-%   Getting this wrong has no visible symptom: every DATA frame is rejected as an
-%   unknown configuration, no data arrives, and nothing reports an error. Check any new
-%   implementation against the canonical vector first — FNV-1a/64 of the single byte 'a'
-%   is 0xaf63dc4c8601ec8c.
+%   A sender must compute this exactly. nmproxy recomputes it from each HELLO and
+%   rejects one that does not match, with a warning, after which no data arrives. Check
+%   any new implementation against the canonical vector first — FNV-1a/64 of the single
+%   byte 'a' is 0xaf63dc4c8601ec8c.
 %
-%   A proxy does not strictly need this. It can treat config_id as an opaque key and
-%   simply match DATA frames to the HELLO that declared the same value. Computing it is
-%   how you catch a sender whose hash disagrees with yours, which is worth doing once at
-%   HELLO rather than discovering later that nothing ever matched.
+%   A relay does not strictly need this. It can treat config_id as an opaque key and
+%   simply match DATA frames to the HELLO that declared the same value. Recomputing it at
+%   HELLO catches a sender whose hash disagrees with nmproxy's.
 %
 %   See also NMFRAME_DECODE
 
     % Hexadecimal literals, not hex2dec. hex2dec returns a *double*, so a value above
-    % 2^53 is silently rounded before uint64() ever sees it — MATLAB warns, and the
-    % result is a constant that is close to the right one and produces a hash matching
-    % nothing. Literals are exact.
+    % 2^53 is rounded before uint64() ever sees it. MATLAB warns, but the result is a
+    % constant close to the right one that produces a hash matching nothing. Literals
+    % are exact.
     OFFSET = 0xcbf29ce484222325u64;
     PRIME  = 0x100000001b3u64;
 
@@ -57,7 +56,7 @@ function h = hashBytes(h, prime, bytes)
     for k = 1:numel(bytes)
         h = bitxor(h, uint64(bytes(k)));
         % Not h * prime: MATLAB's uint64 multiply saturates instead of wrapping, which
-        % would silently produce a hash that agrees with nothing. See the function.
+        % would silently produce a hash that agrees with nothing. See nmframe_mulmod64.
         h = nmframe_mulmod64(h, prime);
     end
 end

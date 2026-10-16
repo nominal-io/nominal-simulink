@@ -10,8 +10,7 @@ import (
 //
 // Deliberately mirrors the C library's nm_open / nm_push / nm_close, because the proxy
 // is doing the same job the host would have done in direct mode — it has simply moved
-// off the constrained machine. Keeping the shapes aligned means the two paths behave the
-// same way under backpressure and failure.
+// off the constrained machine.
 //
 // An interface rather than a concrete type so the session and gap logic is testable
 // without a token or a network, and so the real writer can be swapped without touching
@@ -19,12 +18,13 @@ import (
 type Writer interface {
 	// Open starts a stream. onError is called for every write that fails after Push has
 	// returned: a writer that batches and sends in the background only learns of a
-	// failure later, and the caller has to count those failures all the same. It may be
-	// called from any goroutine.
+	// failure later, and the caller has to count those failures all the same. onError
+	// may be called from any goroutine.
 	Open(datasetRID string, channels []string, onError func(error)) (Stream, error)
 }
 
-// Stream accepts rows for a fixed channel set, in the order Open was given them.
+// Stream accepts rows for a fixed channel set. Each row's values follow the order of
+// the channels passed to Open.
 type Stream interface {
 	// Push writes one row. Implementations must not block indefinitely: the caller is
 	// the UDP receive loop, and stalling it drops datagrams the kernel cannot buffer.
@@ -36,7 +36,7 @@ type Stream interface {
 //
 // Not only a test double — it is genuinely useful for diagnosing a deployment, since it
 // answers "are frames arriving, and do they decode into sensible values?" without a
-// token or any network egress. `nmproxy -dry-run` uses it.
+// token or any network egress. A config file with dry_run: true uses it.
 type LogWriter struct {
 	Log     *slog.Logger
 	Verbose bool

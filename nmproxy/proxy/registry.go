@@ -14,9 +14,9 @@ import (
 //	config_id  identifies a *configuration* — a dataset and an ordered channel list.
 //	           It is what a DATA frame is resolved through, and what a stream is opened
 //	           for. Two runs of the same model share one.
-//	session_id identifies a *run*. Sequence numbers are per-session, so gap detection
-//	           has to be too; two models streaming at once would otherwise look like one
-//	           session with wildly out-of-order sequences.
+//	session_id identifies a *run*. Sequence numbers are per session, so gap detection
+//	           is too. Tracked per configuration, two runs of one model streaming at
+//	           once would look like one session with wildly out-of-order sequences.
 //
 // Conflating them would mean either losing gap detection when a model restarts, or
 // opening a redundant stream per run.
@@ -34,17 +34,19 @@ type session struct {
 	configID uint64
 
 	// Sequence tracking. The host advances the sequence even when a send fails, so a
-	// gap genuinely means data did not arrive rather than merely was not sent.
+	// gap counts every frame that did not arrive, whether the network lost it or the
+	// host could not send it.
 	started  bool
 	nextSeq  uint64
 	gaps     uint64 // frames the sequence says we never received
-	reorders uint64 // arrived after a later frame; UDP is allowed to do this
+	reorders uint64 // arrived after a later frame, or a duplicate
 
 	rows     uint64
 	lastSeen time.Time
 }
 
-// Registry maps frames onto open streams, and is the only mutable state the proxy keeps.
+// Registry maps frames onto open streams and holds the proxy's configuration and session
+// state.
 type Registry struct {
 	writer Writer
 	log    *slog.Logger
@@ -58,14 +60,19 @@ type Registry struct {
 	configs  map[uint64]*config
 	sessions map[uint64]*session
 
-	// Counters for frames that never reach a stream. Reported rather than silently
-	// discarded, because "no data arrived" needs to distinguish between nothing being
-	// sent, frames being rejected, and writes failing.
+	// Counters for frames that never reach a stream, and for writes that fail. Reported
+	// rather than silently discarded, because "no data arrived" needs to distinguish
+	// between nothing being sent, frames being rejected, and writes failing.
 	unknownConfig uint64
 	badFrames     uint64
 	wrongVersion  uint64
 	writeErrors   uint64
-	refused       uint64 // datasets not on the allowlist
+	refused       uint64 // HELLOs for datasets not on the allowlist
+
+	// RIDs already warned about, so each refused dataset is logged once rather than once
+	// a second. Capped at maxRefusedRIDsLogged, because any sender can invent RIDs and
+	// neither the log nor this set should grow with them.
+	refusedRIDs map[string]struct{}
 
 	// What sessions counted before they were forgotten. Stats adds these to the live
 	// sessions' counts so the totals only ever grow; without them a total falls when a
@@ -87,12 +94,15 @@ func NewRegistry(w Writer, cfg Config, log *slog.Logger) *Registry {
 		idleTimeout: idle,
 		configs:     map[uint64]*config{},
 		sessions:    map[uint64]*session{},
+		refusedRIDs: map[string]struct{}{},
 	}
 }
 
-// Handle processes one datagram. Returns an error only for genuinely unexpected
-// problems; malformed input is counted and swallowed, since an unauthenticated sender
-// on the network must not be able to stop the proxy by sending rubbish.
+// maxRefusedRIDsLogged bounds how many distinct refused datasets are named in the log.
+const maxRefusedRIDsLogged = 100
+
+// Handle processes one datagram. Malformed input is counted and dropped, so an
+// unauthenticated sender cannot stop the proxy by sending rubbish.
 func (r *Registry) Handle(buf []byte, now time.Time) {
 	h, err := frame.DecodeHeader(buf)
 	if err != nil {
@@ -103,7 +113,8 @@ func (r *Registry) Handle(buf []byte, now time.Time) {
 			// speaking a version we do not, so without this a mismatch is
 			// indistinguishable from a network fault.
 			if r.wrongVersion == 1 || r.wrongVersion%1000 == 0 {
-				r.log.Warn("rejecting frames with an unsupported protocol version",
+				r.log.Warn("rejecting frames that use another frame protocol version. "+
+					"Use an nmproxy release that speaks the sender's version (see nmproxy -version).",
 					"error", err, "count", r.wrongVersion)
 			}
 		} else {
@@ -148,10 +159,15 @@ func (r *Registry) handleHello(buf []byte, now time.Time) {
 	if !r.cfg.DatasetAllowed(hello.DatasetRID) {
 		r.mu.Lock()
 		r.refused++
-		first := r.refused == 1
+		_, seen := r.refusedRIDs[hello.DatasetRID]
+		first := !seen && len(r.refusedRIDs) < maxRefusedRIDsLogged
+		if first {
+			r.refusedRIDs[hello.DatasetRID] = struct{}{}
+		}
 		r.mu.Unlock()
 		if first {
-			r.log.Warn("refusing a dataset that is not in allowed_datasets",
+			r.log.Warn("refusing a dataset that is not in allowed_datasets. "+
+				"Add its RID to allowed_datasets if nmproxy should write to it.",
 				"dataset", hello.DatasetRID)
 		}
 		return
@@ -200,11 +216,12 @@ func (r *Registry) handleData(buf []byte, now time.Time) {
 
 	c, known := r.configs[data.ConfigID]
 	if !known {
-		// Expected after a proxy restart, and bounded: the host repeats HELLO about
-		// once a second, so this resolves itself.
+		// Expected for up to a second after a proxy restart, until the host's next
+		// HELLO. DATA for a dataset refused at HELLO also lands here, and that does not
+		// resolve.
 		r.unknownConfig++
 		if r.unknownConfig == 1 {
-			r.log.Info("data for an unknown configuration — waiting for a HELLO",
+			r.log.Info("dropping data for a configuration with no accepted HELLO",
 				"config", data.ConfigID)
 		}
 		r.mu.Unlock()
@@ -236,8 +253,9 @@ func (r *Registry) handleData(buf []byte, now time.Time) {
 
 	r.mu.Unlock()
 
-	// Written outside the lock: a slow write must not block other sessions, and the
-	// receive loop is what suffers if this takes too long.
+	// Pushed outside the lock so the stats reporter, the sweeper and the writer's error
+	// callback are not held up. Push runs on the receive loop, so a slow Push still
+	// delays every session.
 	for _, row := range data.Rows {
 		if err := stream.Push(row.TimestampNanos, row.Values); err != nil {
 			r.mu.Lock()
@@ -293,9 +311,9 @@ func (r *Registry) trackSequence(s *session, seq uint64) {
 		s.nextSeq = seq + 1
 
 	default:
-		// Arrived after a frame with a higher sequence. UDP is permitted to reorder, so
-		// this is not loss and must not be counted as such — a reordered frame was
-		// already counted as a gap when the later one arrived.
+		// Arrived after a frame with a higher sequence, or is a duplicate. Its gap was
+		// counted when the later frame arrived and stays counted, so this counts only
+		// as a reorder.
 		s.reorders++
 	}
 }

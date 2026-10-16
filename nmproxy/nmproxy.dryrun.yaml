@@ -1,5 +1,5 @@
-# Dry-run config for the end-to-end check: decode frames and report, write nothing.
-# Needs no token and no allowlist, which is the point.
+# Decodes and logs frames without writing to Nominal, so it needs no API key.
+# Run: nmproxy -config nmproxy.dryrun.yaml
 listen: "127.0.0.1:15400"
 dry_run: true
 log_level: "info"

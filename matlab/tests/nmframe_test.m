@@ -20,9 +20,9 @@ function nmframe_test()
     % shared mistake.
     wantRid       = 'ri.catalog.test.dataset.abc';
     wantChannels  = {'engine.rpm', 'engine.egt', 'engine.psi'};
-    % Hex literals, not hex2dec: hex2dec goes via double and silently rounds anything
-    % above 2^53, which would make these expectations wrong in exactly the way the test
-    % exists to catch.
+    % Hex literals, not hex2dec: hex2dec goes via double and rounds anything above 2^53,
+    % which would make these expectations wrong in exactly the way the test exists to
+    % catch.
     wantSession   = 0x1122334455667788u64;
     wantConfig    = 0x19915455f27bd0f7u64;
     wantSequence  = uint64(42);
@@ -33,9 +33,8 @@ function nmframe_test()
 
     % 1 ------------------------------------------------------------------ config_id
     %
-    % The check that matters most. If this disagrees with the sender, every DATA frame
-    % is rejected as an unknown configuration and no data arrives, with no error
-    % anywhere to explain it.
+    % The check that matters most. If this disagrees with the C encoder, a relay that
+    % uses it rejects every HELLO from a C host and no data arrives.
     got = nmframe_configid(wantRid, wantChannels);
     failures = report(failures, isequal(got, wantConfig), ...
         sprintf('config_id matches the C encoder (got %s)', hexOf(got)));

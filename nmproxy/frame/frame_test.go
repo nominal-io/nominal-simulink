@@ -72,10 +72,9 @@ func loadFixtures(t *testing.T) map[string][]byte {
 	return out
 }
 
-// TestConfigIDMatchesC is the test that matters most. If Go and C disagree here, every
-// DATA frame is rejected as an unknown config and no data arrives — with no error
-// anywhere, because there is no back-channel. It is also the check that caught a
-// transcribed digit missing from the C side's FNV-1a offset basis.
+// TestConfigIDMatchesC is the test that matters most. If Go and C disagree here, the
+// proxy rejects every HELLO from a C host and no data arrives. It is also the check that
+// caught a transcribed digit missing from the C side's FNV-1a offset basis.
 func TestConfigIDMatchesC(t *testing.T) {
 	got := ConfigID(wantRID, wantChannels)
 	if got != wantConfigID {

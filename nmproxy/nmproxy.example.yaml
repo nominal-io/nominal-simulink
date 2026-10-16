@@ -1,16 +1,15 @@
 # nmproxy configuration
 #
-# Copy this to nmproxy.yaml, fill in the token and the datasets you expect, and point
-# the daemon at it:
+# Copy this file, fill in the API key and the datasets you expect, and pass its path to
+# -config:
 #
-#     nmproxy -config /etc/nominal/nmproxy.yaml
+#     nmproxy -config <path to nmproxy.yaml>
 #
-# The file holds an access token, so keep it out of version control and readable only by
-# the account running the daemon (chmod 600). nmproxy warns at startup if it is not.
+# The file holds an API key, so keep it out of version control and readable only by the
+# account running nmproxy (chmod 600). On Linux and macOS, nmproxy warns at startup if
+# other accounts can read the file.
 #
-# Unknown keys are a startup error rather than being ignored: a typo in a key name would
-# otherwise silently leave that setting at its default, which for allowed_datasets means
-# quietly removing a security control.
+# nmproxy refuses to start if this file has a key it does not recognize.
 
 
 # UDP address to receive frames on.
@@ -22,49 +21,41 @@ listen: "0.0.0.0:15400"
 
 
 nominal:
-  # API root. The staging and production hosts differ; a RID from one will not resolve
-  # against the other.
-  base_url: "https://api.gov.nominal.io/api"
+  # The REST API base URL of your Nominal instance: the API URL on your organization's
+  # API keys page.
+  base_url: "<API URL>"
 
-  # A Nominal access token. This is the only secret here.
-  #
-  # It lives on the proxy rather than on the Simulink hosts, and that is a deliberate
-  # improvement: a host in proxy mode sends a dataset RID and never holds a credential,
-  # so a machine on a test bench has nothing worth stealing.
-  token: "REPLACE-ME"
+  # A Nominal API key.
+  token: "<API key>"
 
 
-# Datasets this proxy is permitted to write to.
+# The RIDs of the datasets nmproxy may write to.
 #
-# Strongly recommended. Because frames are unauthenticated, anything that can reach the
-# listening port can otherwise write to any dataset the token above permits — and tokens
-# are usually broad. Listing the RIDs you actually expect bounds the damage to datasets
-# you intended. Leave empty only on a trusted, isolated segment; the daemon warns if you
-# do.
+# Frames are not authenticated, so with this list empty anything that can reach the
+# listening port can write to any dataset the API key can. Leave it empty only on an
+# isolated network. nmproxy warns at startup when it is empty.
 allowed_datasets:
-  # - "ri.catalog.your-env.dataset.00000000-0000-0000-0000-000000000000"
+  # - "<dataset RID>"
 
 
-# How long a configuration may go unheard before its stream is closed and flushed.
+# How long nmproxy keeps a model's stream open after the model stops sending.
 #
-# Hosts re-announce their channel list about once a second, so anything above a few
-# seconds is safe. The default is generous on purpose: closing early would end a run
-# that is merely paused at a breakpoint.
+# Hosts repeat their channel list every second, so any value above a few seconds works.
 idle_timeout: 5m
 
 
-# How often to log a summary of rows written, gaps detected and frames rejected.
+# How often to log a summary of rows received, gaps detected and frames rejected.
 # Set to 0 to disable.
 stats_interval: 30s
 
 
-# debug logs every row, which is a lot at 1 kHz — useful for a few seconds when
-# diagnosing, not for a running deployment.
+# One of debug, info, warn, error. In a dry run, debug logs every row, which is a lot at
+# 1 kHz.
 log_level: "info"
 
 
-# Decode and report frames without writing anything to Nominal.
+# Decode and log frames without writing anything to Nominal.
 #
-# The quickest way to answer "are frames arriving, and do they decode into sensible
-# values?" without needing a valid token. A dry run needs no token and no allowlist.
+# Use it to check that frames arrive and decode to sensible values. A dry run needs no
+# API key.
 dry_run: false
