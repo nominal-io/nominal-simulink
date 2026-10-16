@@ -90,6 +90,10 @@ func run(configPath string) error {
 		return err
 	}
 
+	// Flush before reporting, so the totals and the moment of the log line both reflect
+	// every stream having been written out. The deferred Close is then a no-op.
+	server.Close()
+
 	st := registry.Stats()
 	log.Info("shutting down",
 		"rows", st.Rows, "gaps", st.Gaps, "reorders", st.Reorders,

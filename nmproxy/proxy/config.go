@@ -111,6 +111,20 @@ func LoadConfig(path string) (Config, []string, error) {
 	if cfg.IdleTimeout < 0 {
 		return cfg, nil, fmt.Errorf("%s: idle_timeout cannot be negative", path)
 	}
+	// An explicit zero used to mean the 5m default without saying so. Omitting the key
+	// already gives the default, so a zero is a mistake worth reporting.
+	if cfg.IdleTimeout == 0 {
+		return cfg, nil, fmt.Errorf("%s: idle_timeout must be greater than zero; "+
+			"leave it out to use the default of %s", path, DefaultConfig().IdleTimeout)
+	}
+	// Checked like an unknown key, and for the same reason: a typo here used to mean
+	// info without a word.
+	switch cfg.LogLevel {
+	case "debug", "info", "warn", "error":
+	default:
+		return cfg, nil, fmt.Errorf("%s: log_level %q is not one of debug, info, warn, error",
+			path, cfg.LogLevel)
+	}
 
 	if len(cfg.AllowedDatasets) == 0 && !cfg.DryRun {
 		warnings = append(warnings,
