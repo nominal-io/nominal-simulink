@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
@@ -248,6 +249,44 @@ func TestSweepEvictsIdleAndFlushes(t *testing.T) {
 	if st.Configs != 0 || st.Sessions != 0 {
 		t.Errorf("configs=%d sessions=%d after the idle timeout, want 0 and 0",
 			st.Configs, st.Sessions)
+	}
+
+	// The periodic log subtracts consecutive snapshots, so a total that fell when its
+	// session was forgotten printed as a delta of about 1.8e19.
+	if st.Rows != 3 {
+		t.Errorf("rows=%d after eviction, want the 3 the session wrote", st.Rows)
+	}
+}
+
+// asyncFailWriter hands back the error callback so a test can fail a write after Push
+// has returned, the way the Nominal client does.
+type asyncFailWriter struct {
+	LogWriter
+	onError func(error)
+}
+
+func (w *asyncFailWriter) Open(rid string, channels []string, onError func(error)) (Stream, error) {
+	w.onError = onError
+	return w.LogWriter.Open(rid, channels, nil)
+}
+
+// The Nominal client only enqueues on Push and reports failures later, so a bad token
+// once showed write_errors=0 while every request failed.
+func TestWritesThatFailLaterAreCounted(t *testing.T) {
+	w := &asyncFailWriter{LogWriter: LogWriter{Log: quietLogger()}}
+	r := NewRegistry(w, Config{IdleTimeout: time.Minute}, quietLogger())
+	now := time.Now()
+
+	r.Handle(loadFixture(t, "hello"), now)
+	r.Handle(loadFixture(t, "data"), now)
+	if w.onError == nil {
+		t.Fatal("the registry gave the writer no way to report a later failure")
+	}
+
+	w.onError(errors.New("401 Unauthorized"))
+	w.onError(errors.New("401 Unauthorized"))
+	if st := r.Stats(); st.WriteErrors != 2 {
+		t.Errorf("write_errors=%d, want 2", st.WriteErrors)
 	}
 }
 

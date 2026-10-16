@@ -17,7 +17,11 @@ import (
 // without a token or a network, and so the real writer can be swapped without touching
 // anything above it.
 type Writer interface {
-	Open(datasetRID string, channels []string) (Stream, error)
+	// Open starts a stream. onError is called for every write that fails after Push has
+	// returned: a writer that batches and sends in the background only learns of a
+	// failure later, and the caller has to count those failures all the same. It may be
+	// called from any goroutine.
+	Open(datasetRID string, channels []string, onError func(error)) (Stream, error)
 }
 
 // Stream accepts rows for a fixed channel set, in the order Open was given them.
@@ -41,7 +45,9 @@ type LogWriter struct {
 	streams []*LogStream
 }
 
-func (w *LogWriter) Open(datasetRID string, channels []string) (Stream, error) {
+// Open never reports a failure through onError: nothing is sent, so nothing can fail
+// later.
+func (w *LogWriter) Open(datasetRID string, channels []string, _ func(error)) (Stream, error) {
 	s := &LogStream{rid: datasetRID, channels: channels, parent: w}
 
 	w.mu.Lock()

@@ -42,7 +42,7 @@ func NewNominalWriter(cfg Config, log *slog.Logger) (*NominalWriter, error) {
 	return &NominalWriter{client: client, log: log}, nil
 }
 
-func (w *NominalWriter) Open(datasetRID string, channels []string) (Stream, error) {
+func (w *NominalWriter) Open(datasetRID string, channels []string, onError func(error)) (Stream, error) {
 	ds, errCh, err := w.client.NewDatasetStream(context.Background(), datasetRID)
 	if err != nil {
 		return nil, fmt.Errorf("opening a stream for %s: %w", datasetRID, err)
@@ -53,6 +53,7 @@ func (w *NominalWriter) Open(datasetRID string, channels []string) (Stream, erro
 		ds:       ds,
 		channels: make([]*nominal.ChannelStream[float64], len(channels)),
 		log:      w.log,
+		onError:  onError,
 	}
 
 	// One typed stream per channel, resolved once. Frames carry channel *indices*, so
@@ -89,6 +90,7 @@ type nominalStream struct {
 	ds       *nominal.DatasetStream
 	channels []*nominal.ChannelStream[float64]
 	log      *slog.Logger
+	onError  func(error)
 
 	mu       sync.Mutex
 	errCount uint64
@@ -131,6 +133,12 @@ func (s *nominalStream) recordError(err error) {
 	n := s.errCount
 	s.lastErr = err
 	s.mu.Unlock()
+
+	// Push only enqueues, so this is the only place a failed write to Nominal surfaces.
+	// Without passing it on, a bad token would leave write_errors at zero.
+	if s.onError != nil {
+		s.onError(err)
+	}
 
 	// Rate-limited: a broken token or a wrong base URL fails every request, and logging
 	// each one buries whatever else is happening.

@@ -66,6 +66,13 @@ type Registry struct {
 	wrongVersion  uint64
 	writeErrors   uint64
 	refused       uint64 // datasets not on the allowlist
+
+	// What sessions counted before they were forgotten. Stats adds these to the live
+	// sessions' counts so the totals only ever grow; without them a total falls when a
+	// session is evicted, and the periodic delta wraps to around 1.8e19.
+	retiredRows     uint64
+	retiredGaps     uint64
+	retiredReorders uint64
 }
 
 func NewRegistry(w Writer, cfg Config, log *slog.Logger) *Registry {
@@ -160,7 +167,7 @@ func (r *Registry) handleHello(buf []byte, now time.Time) {
 		return
 	}
 
-	stream, err := r.writer.Open(hello.DatasetRID, hello.Channels)
+	stream, err := r.writer.Open(hello.DatasetRID, hello.Channels, r.countWriteError)
 	if err != nil {
 		r.writeErrors++
 		r.log.Error("could not open a stream for a new configuration",
@@ -245,6 +252,22 @@ func (r *Registry) handleData(buf []byte, now time.Time) {
 	}
 }
 
+// countWriteError records a write that failed after Push returned. The writer logs the
+// error itself; this only has to make it visible in the stats.
+func (r *Registry) countWriteError(error) {
+	r.mu.Lock()
+	r.writeErrors++
+	r.mu.Unlock()
+}
+
+// retire folds a session's counts into the totals before it is forgotten. It must be
+// called with the lock held.
+func (r *Registry) retire(s *session) {
+	r.retiredRows += s.rows
+	r.retiredGaps += s.gaps
+	r.retiredReorders += s.reorders
+}
+
 // trackSequence must be called with the lock held.
 func (r *Registry) trackSequence(s *session, seq uint64) {
 	switch {
@@ -270,6 +293,10 @@ func (r *Registry) trackSequence(s *session, seq uint64) {
 }
 
 // Stats is a snapshot for logging or a metrics endpoint.
+//
+// Configs and Sessions are what is live now. Every other field is a total since the
+// registry started, including sessions since forgotten, so it never decreases and the
+// difference between two snapshots is always what happened in between.
 type Stats struct {
 	Configs       int
 	Sessions      int
@@ -295,6 +322,9 @@ func (r *Registry) Stats() Stats {
 		WrongVersion:  r.wrongVersion,
 		WriteErrors:   r.writeErrors,
 		Refused:       r.refused,
+		Rows:          r.retiredRows,
+		Gaps:          r.retiredGaps,
+		Reorders:      r.retiredReorders,
 	}
 	for _, s := range r.sessions {
 		st.Rows += s.rows
@@ -314,6 +344,7 @@ func (r *Registry) Sweep(now time.Time) {
 		if now.Sub(s.lastSeen) > r.idleTimeout {
 			r.log.Info("session idle, forgetting it",
 				"session", id, "rows", s.rows, "gaps", s.gaps, "reorders", s.reorders)
+			r.retire(s)
 			delete(r.sessions, id)
 		}
 	}
@@ -341,6 +372,10 @@ func (r *Registry) Close() {
 	streams := make([]Stream, 0, len(r.configs))
 	for _, c := range r.configs {
 		streams = append(streams, c.stream)
+	}
+	// Retired rather than dropped, so the totals logged at shutdown still include them.
+	for _, s := range r.sessions {
+		r.retire(s)
 	}
 	r.configs = map[uint64]*config{}
 	r.sessions = map[uint64]*session{}
