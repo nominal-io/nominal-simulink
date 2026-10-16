@@ -70,6 +70,12 @@ struct nm_stream {
     volatile int running;
     uint32_t  batch_delay_ms;
 
+    /* 0 until nm_close, which sets it to the wall-clock instant the final flush must
+     * finish by, before stopping the sender -- so a drain the sender is part-way
+     * through is bounded too. Aligned 64-bit accesses are atomic on our targets. */
+    volatile int64_t close_deadline;
+    uint32_t         close_timeout_ms;
+
     /* Counters. Each is written by exactly one thread -- pushed, accepted and
      * dropped-on-full by the producer, the rest by the sender -- and read by nm_stats.
      * Aligned 64-bit reads are atomic on the targets we build for, so nm_stats needs no
@@ -212,6 +218,36 @@ static void drain_proxy(nm_stream *s)
 
 /* ------------------------------------------------------------ direct mode */
 
+static int close_deadline_passed(const nm_stream *s)
+{
+    int64_t d = s->close_deadline;
+    return d != 0 && nm_now_nanos() >= d;
+}
+
+/* The final flush is out of time: count what is still buffered as lost rather than
+ * keep the caller waiting on it. */
+static void abandon_remaining(nm_stream *s)
+{
+    const int64_t *timestamps;
+    const double  *values;
+    size_t         rows;
+    uint64_t       total = 0;
+
+    while ((rows = nm_ring_peek(&s->ring, &timestamps, &values)) > 0) {
+        nm_ring_consume(&s->ring, rows);
+        total += rows;
+    }
+    s->rows_dropped += total;
+
+    /* An earlier failure is the more useful explanation, so it is kept if there is
+     * one. With none, a slow network is all that is left to blame. */
+    if (total > 0 && s->last_error[0] == '\0') {
+        snprintf(s->last_error, sizeof s->last_error,
+                 "%llu rows were still buffered when the %u ms allowed for the final "
+                 "flush ran out", (unsigned long long)total, (unsigned)s->close_timeout_ms);
+    }
+}
+
 /*
  * Send whatever is currently readable. Called on the sender thread's schedule and
  * once more from nm_close.
@@ -229,6 +265,10 @@ static void drain_direct(nm_stream *s)
 
         rows = nm_ring_peek(&s->ring, &timestamps, &values);
         if (rows == 0) {
+            return;
+        }
+        if (close_deadline_passed(s)) {
+            abandon_remaining(s);
             return;
         }
         if (rows > NM_MAX_ROWS_PER_REQUEST) {
@@ -256,13 +296,19 @@ static void drain_direct(nm_stream *s)
         }
 
         nm_http_post(s->http, s->encode_buf, encoded, NM_MAX_ATTEMPTS, &result);
-        s->last_status = result.status;
 
         if (result.ok) {
             s->requests_ok += 1;
             s->rows_sent   += rows;
         } else {
-            memcpy(s->last_error, result.error, sizeof s->last_error);
+            /* Only failures set these. A later success must not overwrite the status
+             * that explains the loss, or the report reads "last HTTP status 204".
+             * Nor should a request cut short by the close deadline, which says less
+             * than whatever failure came before it. */
+            if (!(close_deadline_passed(s) && s->last_error[0] != '\0')) {
+                s->last_status = result.status;
+                memcpy(s->last_error, result.error, sizeof s->last_error);
+            }
             /* Retries are already exhausted inside nm_http_post. Holding the rows
              * would wedge the ring behind a request that may never succeed, so they
              * are counted as lost and released. */
@@ -340,8 +386,9 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
         goto done;
     }
 
-    s->mode           = cfg->mode;
-    s->batch_delay_ms = cfg->max_batch_delay_ms > 0 ? cfg->max_batch_delay_ms : 100u;
+    s->mode             = cfg->mode;
+    s->batch_delay_ms   = cfg->max_batch_delay_ms > 0 ? cfg->max_batch_delay_ms : 100u;
+    s->close_timeout_ms = cfg->close_timeout_ms > 0 ? cfg->close_timeout_ms : 15000u;
 
     if (copy_channels(s, cfg->channel_names, cfg->channel_count) != 0) {
         st = NM_ERR_ALLOC;
@@ -416,7 +463,7 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
         }
 
         s->http = nm_http_open(cfg->base_url, cfg->token, cfg->dataset_rid,
-                               cfg->ca_bundle_path);
+                               cfg->ca_bundle_path, &s->close_deadline);
         if (s->http == NULL) {
             st = NM_ERR_TRANSPORT;
             goto fail;
@@ -503,6 +550,10 @@ void nm_close_stats(nm_stream *s, nm_stats_t *out)
         }
         return;
     }
+
+    /* Set before the sender is told to stop, so a drain it is part-way through is held
+     * to the same limit as the one below. */
+    s->close_deadline = nm_now_nanos() + (int64_t)s->close_timeout_ms * 1000000;
 
     if (s->thread_started) {
         s->running = 0;

@@ -185,7 +185,7 @@ int main(int argc, char **argv)
            (unsigned long long)stats.rows_dropped,
            (unsigned long long)stats.requests_ok,
            (unsigned long long)stats.requests_failed);
-    printf("last HTTP status = %ld\n", stats.last_http_status);
+    printf("last failed HTTP status = %ld\n", stats.last_http_status);
     if (stats.last_error[0] != '\0') {
         printf("last error       = %s\n", stats.last_error);
     }

@@ -100,6 +100,12 @@ typedef struct {
      * Lower means fresher data and more requests; 100 ms matches the Rust client. */
     uint32_t max_batch_delay_ms;
 
+    /* How long nm_close may spend sending what is still buffered. Rows not sent by
+     * then are counted as dropped. 0 means 15000. Without a limit, every remaining
+     * batch got its full retries and timeouts, so stopping a model with Nominal
+     * unreachable could take many minutes. */
+    uint32_t close_timeout_ms;
+
     /* Path to a CA bundle for TLS verification. Supplying one explicitly, rather
      * than relying on a system trust store, is deliberate: it is what keeps this
      * portable to targets that have no such store. NULL uses the platform default,
@@ -114,7 +120,11 @@ typedef struct {
     uint64_t rows_dropped;     /* discarded: buffer full, or the request failed */
     uint64_t requests_ok;
     uint64_t requests_failed;
-    long     last_http_status; /* 0 if no request has completed yet */
+
+    /* The HTTP status of the most recent *failed* request: 0 if none has failed, or if
+     * it failed without a response. A success does not overwrite it, so it still says
+     * why rows were lost after later requests went through. */
+    long     last_http_status;
 
     /* Why the last failure happened — a transport message, or the server's error
      * body, which is a conjure envelope carrying an errorInstanceId. Empty when
@@ -163,8 +173,9 @@ uint64_t nm_dropped_rows(const nm_stream *s);
 /*
  * Flush what is buffered, stop the sender thread, and release everything.
  *
- * This blocks until the outstanding rows have been sent or have failed, so it must not
- * be called from a real-time context. Passing NULL is a no-op.
+ * This blocks until the outstanding rows have been sent or have failed, or until
+ * close_timeout_ms has passed, so it must not be called from a real-time context.
+ * Passing NULL is a no-op.
  */
 void nm_close(nm_stream *s);
 

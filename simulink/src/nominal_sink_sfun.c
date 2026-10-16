@@ -78,6 +78,7 @@ typedef struct {
     nm_stream *stream;
     int64_t    epoch_nanos;
     int        time_mode;
+    int        mode;            /* MODE_DIRECT or MODE_PROXY, for the end-of-run report */
     size_t     channel_count;
 } sink_state;
 
@@ -331,6 +332,7 @@ static void mdlStart(SimStruct *S)
     }
 
     st->time_mode     = (int)mxGetScalar(ssGetSFcnParam(S, P_TIME_MODE));
+    st->mode          = mode;
     st->channel_count = count;
     /* Captured once, so simulation time maps onto a fixed instant for the whole run. */
     st->epoch_nanos   = nm_now_nanos();
@@ -484,13 +486,30 @@ static void mdlTerminate(SimStruct *S)
      */
     if (stats.rows_dropped > 0 || stats.requests_failed > 0) {
         static char warn[512];
+        char        why[96];
+
+        /* Say which of the three ways rows are lost happened, since each has a
+         * different remedy. With no failed sends, the loss can only be the buffer
+         * refusing rows. Status 0 means a request got no response at all, which
+         * "HTTP status 0" would only obscure. */
+        if (stats.requests_failed == 0) {
+            snprintf(why, sizeof why,
+                     "the buffer filled faster than the network drained it");
+        } else if (st->mode == MODE_PROXY) {
+            snprintf(why, sizeof why, "%llu datagrams could not be sent to the relay",
+                     (unsigned long long)stats.requests_failed);
+        } else if (stats.last_http_status > 0) {
+            snprintf(why, sizeof why, "%llu requests failed, the last with HTTP status %ld",
+                     (unsigned long long)stats.requests_failed, stats.last_http_status);
+        } else {
+            snprintf(why, sizeof why, "%llu requests failed, the last with no response",
+                     (unsigned long long)stats.requests_failed);
+        }
         snprintf(warn, sizeof warn,
-                 "Nominal Stream Sink: %llu of %llu rows did not reach Nominal "
-                 "(%llu requests failed, last HTTP status %ld).%s%s",
+                 "Nominal Stream Sink: %llu of %llu rows did not reach Nominal (%s).%s%s",
                  (unsigned long long)stats.rows_dropped,
                  (unsigned long long)stats.rows_pushed,
-                 (unsigned long long)stats.requests_failed,
-                 stats.last_http_status,
+                 why,
                  stats.last_error[0] != '\0' ? " Last error: " : "",
                  stats.last_error);
         ssWarning(S, warn);

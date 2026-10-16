@@ -83,6 +83,15 @@ if(BUILD_TESTING)
   target_link_libraries(test_frame PRIVATE nominalstream)
   target_include_directories(test_frame PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME frame COMMAND test_frame)
+
+  add_executable(test_http tests/test_http.c)
+  target_link_libraries(test_http PRIVATE nominalstream)
+  target_include_directories(test_http PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+  if(NOT WIN32)
+    find_package(Threads REQUIRED)
+    target_link_libraries(test_http PRIVATE Threads::Threads)
+  endif()
+  add_test(NAME http COMMAND test_http)
 endif()
 
 # Next: the Simulink S-function, in a sibling simulink/ directory, then the QNX and

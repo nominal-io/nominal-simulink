@@ -31,13 +31,19 @@ typedef struct {
  * Build the request URL and headers once. `base_url` is the API root,
  * `dataset_rid` an existing dataset, `ca_bundle_path` may be NULL to use the
  * platform default. Returns NULL on failure.
+ *
+ * `deadline` points at a wall-clock instant in nanoseconds, 0 for none, which another
+ * thread may set at any time. Once it has passed, a request in flight is abandoned and
+ * no further attempts are made. It is how nm_close bounds the final flush.
  */
 nm_http *nm_http_open(const char *base_url, const char *token,
-                      const char *dataset_rid, const char *ca_bundle_path);
+                      const char *dataset_rid, const char *ca_bundle_path,
+                      const volatile int64_t *deadline);
 
 /*
  * POST one encoded body, retrying up to `max_attempts` times on transport failure or
- * 5xx. Blocks; only ever called from the sender thread.
+ * 5xx, unless the deadline passes first. Blocks; only ever called from the sender
+ * thread.
  */
 void nm_http_post(nm_http *h, const uint8_t *body, size_t len,
                   int max_attempts, nm_http_result *out);

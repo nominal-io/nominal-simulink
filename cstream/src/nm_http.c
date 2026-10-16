@@ -1,6 +1,8 @@
 #include "nm_http.h"
 #include "nm_thread.h"   /* nm_sleep_ms, for backoff */
 
+#include "nominal_stream.h"   /* nm_now_nanos */
+
 #include <curl/curl.h>
 
 #include <stdio.h>
@@ -19,7 +21,24 @@ struct nm_http {
     char              *url;
     char               response[256];
     size_t             response_len;
+
+    const volatile int64_t *deadline;   /* may be NULL */
 };
+
+static int deadline_passed(const nm_http *h)
+{
+    int64_t d = h->deadline != NULL ? *h->deadline : 0;
+    return d != 0 && nm_now_nanos() >= d;
+}
+
+/* libcurl calls this about once a second even while a transfer is stalled, which is
+ * what lets a request already in flight be abandoned. Non-zero aborts it. */
+static int abort_after_deadline(void *userdata, curl_off_t dltotal, curl_off_t dlnow,
+                                curl_off_t ultotal, curl_off_t ulnow)
+{
+    (void)dltotal; (void)dlnow; (void)ultotal; (void)ulnow;
+    return deadline_passed(userdata);
+}
 
 /* Collect a bounded prefix of the response body. Errors arrive as a conjure envelope
  * carrying an errorInstanceId, which is the handle support needs -- so keep enough to
@@ -40,7 +59,8 @@ static size_t collect_response(char *data, size_t size, size_t nmemb, void *user
 }
 
 nm_http *nm_http_open(const char *base_url, const char *token,
-                      const char *dataset_rid, const char *ca_bundle_path)
+                      const char *dataset_rid, const char *ca_bundle_path,
+                      const volatile int64_t *deadline)
 {
     nm_http *h;
     size_t   url_len;
@@ -55,6 +75,7 @@ nm_http *nm_http_open(const char *base_url, const char *token,
     if (h == NULL) {
         return NULL;
     }
+    h->deadline = deadline;
 
     url_len = strlen(base_url) + strlen(NM_WRITE_PATH) + strlen(dataset_rid) + 1;
     h->url = malloc(url_len);
@@ -100,6 +121,12 @@ nm_http *nm_http_open(const char *base_url, const char *token,
     curl_easy_setopt(h->curl, CURLOPT_CONNECTTIMEOUT, 5L);
     curl_easy_setopt(h->curl, CURLOPT_TIMEOUT, 30L);
 
+    if (deadline != NULL) {
+        curl_easy_setopt(h->curl, CURLOPT_XFERINFOFUNCTION, abort_after_deadline);
+        curl_easy_setopt(h->curl, CURLOPT_XFERINFODATA, h);
+        curl_easy_setopt(h->curl, CURLOPT_NOPROGRESS, 0L);
+    }
+
     /*
      * TLS trust. An explicit bundle is the portable answer and the one a target will
      * use -- an RTOS has no OS trust store to fall back on, which is precisely what
@@ -144,10 +171,28 @@ void nm_http_post(nm_http *h, const uint8_t *body, size_t len,
     for (attempt = 1; attempt <= max_attempts; attempt++) {
         CURLcode rc;
 
+        /* Out of time: keep the failure that brought us here, if there was one. */
+        if (deadline_passed(h)) {
+            if (attempt == 1) {
+                snprintf(out->error, sizeof out->error,
+                         "not sent: the final flush ran out of time");
+            }
+            return;
+        }
+
         h->response[0]  = '\0';
         h->response_len = 0;
 
         rc = curl_easy_perform(h->curl);
+        if (rc == CURLE_ABORTED_BY_CALLBACK) {
+            /* A retry cut short says less than the failure that caused it. */
+            if (attempt == 1) {
+                snprintf(out->error, sizeof out->error,
+                         "abandoned: the final flush ran out of time");
+                out->status = 0;
+            }
+            return;
+        }
         if (rc != CURLE_OK) {
             /* Certificate failures are the one transport error with an obvious
              * remedy, and the bare libcurl string does not suggest it. Named by the
