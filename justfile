@@ -48,6 +48,17 @@ build: configure
 test: build
     cd {{builddir}} && ctest -C {{config}} --output-on-failure
 
+# Build the relay for this machine into build/. Releases carry builds for each platform,
+# made by CI with the same flags.
+relay:
+    cd nmproxy && go build -trimpath \
+      -ldflags "-X main.version=$(tr -d '[:space:]' < ../simulink/VERSION)-dev" \
+      -o ../{{builddir}}/nmproxy{{ if os() == "windows" { ".exe" } else { "" } }} ./cmd/nmproxy
+
+# Vet and test the relay
+relay-test:
+    cd nmproxy && go vet ./... && go test ./...
+
 # Usage:
 #   just demo rid=ri.catalog....
 #   just demo rid=ri.catalog.... base=https://api.example.nominal.io/api

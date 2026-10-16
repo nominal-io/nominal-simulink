@@ -22,13 +22,13 @@ import (
 func main() {
 	var (
 		configPath  = flag.String("config", "", "path to nmproxy.yaml (required)")
-		showVersion = flag.Bool("version", false, "print the protocol version and exit")
+		showVersion = flag.Bool("version", false, "print the version and protocol version, and exit")
 	)
 	flag.Usage = usage
 	flag.Parse()
 
 	if *showVersion {
-		fmt.Printf("nmproxy, frame protocol version %d\n", frameVersion)
+		fmt.Printf("nmproxy %s, frame protocol version %d\n", version, frameVersion)
 		return
 	}
 	if *configPath == "" {

@@ -185,9 +185,56 @@ jobs:
         with:
           command: addpath('simulink/tests'); assertSuccess(runtests('InstalledToolboxTest'))
 
+  # The relay, prebuilt for each platform it is likely to run on. Pure Go with cgo off,
+  # so one runner cross-builds them all and the binaries need nothing installed.
+  relay:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: nmproxy/go.mod
+          cache-dependency-path: nmproxy/go.sum
+
+      - name: Vet and test
+        working-directory: nmproxy
+        run: go vet ./... && go test ./...
+
+      # Each archive holds the binary and the example configuration it starts from. A
+      # build that is not from a tag says so in its version, so a binary from main is
+      # never mistaken for a release.
+      - name: Build an archive per platform
+        run: |
+          version="$(tr -d '[:space:]' < simulink/VERSION)"
+          if [ "$GITHUB_REF_TYPE" != "tag" ]; then version="$version-dev.${GITHUB_SHA::7}"; fi
+          mkdir -p stage dist
+          for target in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do
+            os="${target%/*}"; arch="${target#*/}"
+            name="nmproxy-$version-$os-$arch"
+            exe=""; [ "$os" = "windows" ] && exe=".exe"
+            mkdir -p "stage/$name"
+            (cd nmproxy && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+              -ldflags "-s -w -X main.version=$version" \
+              -o "../stage/$name/nmproxy$exe" ./cmd/nmproxy)
+            cp nmproxy/nmproxy.example.yaml "stage/$name/"
+            if [ "$os" = "windows" ]; then
+              (cd stage && zip -qr "../dist/$name.zip" "$name")
+            else
+              tar -C stage -czf "dist/$name.tar.gz" "$name"
+            fi
+          done
+          (cd dist && sha256sum nmproxy-* > SHA256SUMS)
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay
+          path: dist/*
+          if-no-files-found: error
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: install-test
+    needs: [install-test, relay]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -197,6 +244,11 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: mltbx
+          path: build
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: relay
           path: build
 
       # The tag names the release and VERSION versions the toolbox, so a mismatch would
@@ -209,10 +261,11 @@ jobs:
             exit 1
           fi
 
-      - name: Attach the toolbox to a GitHub release
+      - name: Attach the toolbox and the relay to a GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" build/NominalBlockset-*.mltbx \
+          gh release create "$GITHUB_REF_NAME" \
+            build/NominalBlockset-*.mltbx build/nmproxy-* build/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --title "Nominal Blockset $GITHUB_REF_NAME" \
-            --notes "Install by opening the .mltbx in MATLAB R2021b or later."
+            --notes "Install the blockset by opening the .mltbx in MATLAB R2021b or later. The nmproxy archives hold the relay for each platform, with an example configuration."
