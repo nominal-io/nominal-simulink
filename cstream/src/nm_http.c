@@ -150,10 +150,12 @@ void nm_http_post(nm_http *h, const uint8_t *body, size_t len,
         rc = curl_easy_perform(h->curl);
         if (rc != CURLE_OK) {
             /* Certificate failures are the one transport error with an obvious
-             * remedy, and the bare libcurl string does not suggest it. */
+             * remedy, and the bare libcurl string does not suggest it. Named by the
+             * environment variable, because that is what a user of the block or the
+             * demo can set; ca_bundle_path is only visible to code calling nm_open. */
             if (rc == CURLE_PEER_FAILED_VERIFICATION || rc == CURLE_SSL_CACERT_BADFILE) {
                 snprintf(out->error, sizeof out->error,
-                         "%s -- set ca_bundle_path to a CA bundle (libcurl: %s)",
+                         "%s -- point NOMINAL_CA_BUNDLE at a CA bundle (libcurl: %s)",
                          curl_easy_strerror(rc), curl_version());
             } else {
                 snprintf(out->error, sizeof out->error, "%s", curl_easy_strerror(rc));
