@@ -14,6 +14,16 @@ function make_library()
     here = fileparts(mfilename('fullpath'));
     target = fullfile(here, [libName '.slx']);
 
+    % The S-function must be resolvable, or Simulink cannot run mdlInitializeSizes and
+    % the block keeps the default one-in-one-out shape — which then gets saved, so every
+    % block dragged out shows an output port its checkbox says it does not have.
+    addpath(here, fullfile(here, 'blocks'));
+    if isempty(which('nominal_sink_sfun'))
+        error('nominal:library', ...
+              ['nominal_sink_sfun is not on the path. Build it first (`just build`); ' ...
+               'without it the block cannot size its ports.']);
+    end
+
     % Start from scratch: leaving an old copy loaded is the usual reason a mask edit
     % appears not to take.
     if bdIsLoaded(libName)
@@ -26,14 +36,38 @@ function make_library()
     new_system(libName, 'Library');
     load_system(libName);
 
+    % Unlocked up front, not just before saving. A locked library silently ignores
+    % set_param on its blocks, which is enough to make the port-sizing step below look
+    % like it ran when it did not.
+    set_param(libName, 'Lock', 'off');
+
     blockPath = [libName '/' blockName];
     add_block('built-in/S-Function', blockPath);
 
+    % Seeded with literal values, not the mask variable names.
+    %
+    % There is a chicken and egg here: Parameters has to name mask variables, but the
+    % mask cannot be created until the block exists, and the moment FunctionName is set
+    % Simulink runs mdlInitializeSizes — which fails if the parameter count does not
+    % match, or if the names do not resolve. So give it real values now, and swap in the
+    % variable names once the mask is built.
+    %
+    % Getting this wrong is not loud: the block simply keeps the default S-Function
+    % shape of one input and one output, that shape is saved, and every block dragged
+    % out shows an output port its own checkbox says it does not have.
     set_param(blockPath, ...
         'FunctionName', 'nominal_sink_sfun', ...
-        'Parameters', ['channels, datasetRid, baseUrl, sampleTime, ' ...
-                       'capacityRows, timeMode, showDropped, ' ...
-                       'mode, proxyHost, proxyPort']);
+        'Parameters', [ ...
+            '''engine.rpm, engine.egt, engine.psi'', ' ...   % channels
+            '''''' ', ' ...                                  % datasetRid
+            '''https://api.gov.nominal.io/api'', ' ...       % baseUrl
+            '0.001, ' ...                                    % sampleTime
+            '4096, ' ...                                     % capacityRows
+            '1, ' ...                                        % timeMode
+            '0, ' ...                                        % showDropped
+            '1, ' ...                                        % mode
+            '''127.0.0.1'', ' ...                            % proxyHost
+            '15400']);                                       % proxyPort
 
     % --- mask -------------------------------------------------------------------
     %
@@ -141,16 +175,39 @@ function make_library()
     % missing MEX only shows up when the model is run.
     m.Initialization = pathFixPrefix();
 
+    % Now that every mask parameter exists, point the S-function at them. Doing this
+    % last is what lets mdlInitializeSizes evaluate real values and size the ports to
+    % match the dialog, rather than leaving the default one-in-one-out shape.
+    set_param(blockPath, 'Parameters', ...
+        ['channels, datasetRid, baseUrl, sampleTime, ' ...
+         'capacityRows, timeMode, showDropped, ' ...
+         'mode, proxyHost, proxyPort']);
+
+
     % Apply it once now, so a freshly dragged block starts with the right fields greyed
     % rather than waiting for the user to touch the popup.
     nominal_sink_modecb(blockPath);
+
+    % Assert the block matches its own dialog before saving it.
+    %
+    % This failure mode is silent and cost several rounds to find: the block keeps the
+    % default S-Function shape whenever mdlInitializeSizes cannot run, that shape is
+    % saved, and the only symptom is a model refusing to run with an error pointing at
+    % the block rather than at the library that produced it.
+    ports = get_param(blockPath, 'Ports');
+    if numel(ports) < 2 || ports(2) ~= 0
+        error('nominal:library', ...
+              ['the block reports %d output(s) with showDropped off, so its ports did ' ...
+               'not track its parameters. Blocks dragged from this library would not ' ...
+               'run.'], ports(2));
+    end
 
     % --- save -------------------------------------------------------------------
     set_param(libName, 'Lock', 'off');
     save_system(libName, target);
     close_system(libName, 0);
 
-    fprintf('wrote %s\n', target);
+    fprintf('wrote %s (%d in, %d out)\n', target, ports(1), ports(2));
 end
 
 function prefix = pathFixPrefix()
