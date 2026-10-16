@@ -5,8 +5,7 @@ add_library(nominalstream
   src/nm_encode.c
   src/nm_ring.c
   src/nm_http.c
-  # Proxy mode. nm_frame is its own translation unit so a static link into a real-time
-  # application drops the decoder as dead code -- a target only ever sends frames.
+  # Proxy mode: the frame codec and the UDP transport.
   src/nm_frame.c
   src/nm_udp.c
 )
@@ -20,8 +19,8 @@ endif()
 #
 # Supply it deliberately rather than by accident: configure with the vcpkg toolchain
 # (see README) so this resolves to a curl we chose. Without one, CMake may find
-# whatever happens to be installed -- on this dev machine that was GStreamer's bundled
-# copy, which is not something to ship against.
+# whatever happens to be installed -- on one developer machine it found GStreamer's
+# bundled copy, which is not something to ship against.
 #
 # Consuming curl through its CMake config matters for static builds: the imported
 # target carries INTERFACE_COMPILE_DEFINITIONS "CURL_STATICLIB", so the define curl's
@@ -38,17 +37,10 @@ target_include_directories(nominalstream
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
-# Compression of the request body.
-#
-# Probed against the live server 2026-08-31: it returns 204 for `identity`, for no
-# Content-Encoding header at all, for `zstd`, and for the pre-0.9.6 `x-snappy-framed`.
-# So compression is optional, and OFF removes libzstd from the QNX cross-compile
-# entirely. Turn it ON if payload size on a constrained link outweighs the CPU cost --
-# the sample request compresses 177 bytes to 113.
-option(NM_USE_ZSTD "Compress request bodies with zstd" OFF)
-if(NM_USE_ZSTD)
-  target_compile_definitions(nominalstream PRIVATE NM_USE_ZSTD=1)
-endif()
+# Request bodies are sent uncompressed (Content-Encoding: identity), which keeps libzstd
+# out of the QNX cross-compile. Probed against the live server 2026-08-31: it returns
+# 204 for `identity`, for no Content-Encoding header at all, for `zstd`, and for the
+# pre-0.9.6 `x-snappy-framed`.
 
 if(NOT MSVC)
   target_compile_options(nominalstream PRIVATE -Wall -Wextra -Wpedantic)
@@ -93,6 +85,3 @@ if(BUILD_TESTING)
   endif()
   add_test(NAME http COMMAND test_http)
 endif()
-
-# Next: the Simulink S-function, in a sibling simulink/ directory, then the QNX and
-# Antelope cross-compiles.

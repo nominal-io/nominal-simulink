@@ -9,7 +9,7 @@
  *
  *   - Every allocation happens in nm_open(). nm_push() never calls malloc.
  *   - nm_push() never blocks. If there is no room it discards the sample and says so.
- *   - No TLS, socket, or compression work happens on the calling thread.
+ *   - nm_push() does no TLS, socket, or compression work.
  *
  * That means nm_push() has a bounded cost that does not depend on the network, which is
  * what makes it safe to call from a control loop. The cost of that guarantee is that
@@ -19,8 +19,9 @@
  *
  * Scope is deliberately narrow: this writes points to an existing dataset and does
  * nothing else. Creating datasets, resolving assets, and every other catalog operation
- * belongs to the Rust client in the nominal-c repository. A stream needs only a token,
- * a dataset RID, and a base URL — no API call is required to open one.
+ * belongs to the Rust client in the nominal-c repository. A direct stream needs an API
+ * key, a dataset RID and a base URL. A proxy stream needs a dataset RID and the relay's
+ * address. Opening either makes no API call.
  */
 
 #ifndef NOMINAL_STREAM_H
@@ -33,16 +34,17 @@
 extern "C" {
 #endif
 
-/* Status codes. Negative values are failures; nm_push additionally returns a positive
- * count of discarded samples, so callers should test for < 0 rather than != 0. */
+/* Status codes. Negative values are failures. nm_push also returns 1 when it discards
+ * a row, so test for < 0 rather than != 0. */
 typedef enum {
     NM_OK              =  0,
     NM_ERR_ARG         = -1,  /* a required field was missing or malformed */
     NM_ERR_ALLOC       = -2,  /* could not reserve the buffers at open time */
     NM_ERR_THREAD      = -3,  /* the sender thread would not start */
-    NM_ERR_TRANSPORT   = -4,  /* the HTTP client could not be initialised */
-    NM_ERR_CLOSED      = -5,  /* used after nm_close */
-    NM_ERR_TOO_LARGE   = -6   /* PROXY: the channel list does not fit one datagram */
+    NM_ERR_TRANSPORT   = -4,  /* the HTTPS client or the relay socket could not be set up */
+    NM_ERR_CLOSED      = -5,  /* reserved, not returned by any function */
+    NM_ERR_TOO_LARGE   = -6   /* PROXY: too many channels for one row to fit a datagram,
+                               * or the RID and names do not fit one HELLO datagram */
 } nm_status;
 
 typedef struct nm_stream nm_stream;
@@ -58,8 +60,8 @@ typedef struct nm_stream nm_stream;
  * affordable on a machine that is already at its performance limit. It also means no
  * credential lives on this machine: the dataset RID travels, the token does not.
  *
- * The choice affects only the sink. The ring, the sender thread, timestamps and the
- * Simulink block are identical either way.
+ * The choice affects only where the sender thread delivers rows. The ring, timestamps
+ * and the Simulink block are the same either way.
  */
 typedef enum {
     NM_MODE_DIRECT = 0,
@@ -69,7 +71,8 @@ typedef enum {
 typedef struct {
     nm_mode mode;
 
-    /* DIRECT only. base_url is the API root, e.g. "https://api.gov.nominal.io/api". */
+    /* DIRECT only. base_url is the REST API root, e.g. "https://api.gov.nominal.io/api".
+     * token is a Nominal API key. */
     const char *base_url;
     const char *token;
 
@@ -91,18 +94,18 @@ typedef struct {
     size_t             channel_count;
 
     /* Rows of capacity to reserve. One row is one timestamp plus one value per
-     * channel. This bounds the library's memory exactly: it will never allocate
-     * beyond this, and will discard samples rather than grow. Size it for the
-     * longest network stall worth surviving — at 1 kHz, 60000 rows is a minute. */
+     * channel. The buffer never grows past this: nm_push discards rows instead. Size
+     * it for the longest network stall worth surviving — at 1 kHz, 60000 rows is a
+     * minute. */
     size_t capacity_rows;
 
-    /* How long the sender may wait for more rows before sending a partial batch.
-     * Lower means fresher data and more requests; 100 ms matches the Rust client. */
+    /* How often the sender sends what is buffered. 0 means 100 ms, which matches the
+     * Rust client. Lower means fresher data and more requests. */
     uint32_t max_batch_delay_ms;
 
     /* How long nm_close may spend sending what is still buffered. Rows not sent by
-     * then are counted as dropped. 0 means 15000. Without a limit, every remaining
-     * batch got its full retries and timeouts, so stopping a model with Nominal
+     * then are counted as dropped. 0 means 15000. Without the limit, every remaining
+     * batch would get its full retries and timeouts, so stopping a model with Nominal
      * unreachable could take many minutes. */
     uint32_t close_timeout_ms;
 
@@ -116,9 +119,11 @@ typedef struct {
 typedef struct {
     uint64_t rows_pushed;      /* handed to nm_push, whether or not there was room */
     uint64_t rows_accepted;    /* taken into the buffer by nm_push */
-    uint64_t rows_sent;        /* acknowledged by the server */
-    uint64_t rows_dropped;     /* discarded: buffer full, or the request failed */
-    uint64_t requests_ok;
+    uint64_t rows_sent;        /* DIRECT: acknowledged by the server.
+                                * PROXY: handed to the socket, unacknowledged. */
+    uint64_t rows_dropped;     /* discarded: buffer full, send failed, or still
+                                * buffered when close_timeout_ms ran out */
+    uint64_t requests_ok;      /* HTTP requests, or datagrams in PROXY mode */
     uint64_t requests_failed;
 
     /* The HTTP status of the most recent *failed* request: 0 if none has failed, or if
@@ -126,16 +131,17 @@ typedef struct {
      * why rows were lost after later requests went through. */
     long     last_http_status;
 
-    /* Why the last failure happened — a transport message, or the server's error
-     * body, which is a conjure envelope carrying an errorInstanceId. Empty when
-     * nothing has failed. Without this a caller has no way to tell a working stream
-     * from one silently discarding everything, since both keep running. */
+    /* Why the last failure happened: a transport message, or the start of the
+     * server's JSON error body, which includes an errorInstanceId for support. Empty
+     * when nothing has failed. The counters show that rows are being lost, and this
+     * shows why. */
     char last_error[256];
 } nm_stats_t;
 
 /*
- * Open a stream. Performs no network I/O and makes no API call — it reserves buffers,
- * copies the channel names, and starts the sender thread.
+ * Open a stream. Makes no API call. Reserves buffers, copies the channel names, and
+ * starts the sender thread. In DIRECT mode this does no network I/O. In PROXY mode it
+ * resolves proxy_host and sends the first HELLO.
  *
  * Returns NULL on failure, writing the reason to *status if status is non-NULL.
  */
@@ -182,10 +188,12 @@ void nm_close(nm_stream *s);
 /*
  * Flush, report, and release.
  *
- * Identical to nm_close but fills *out first. Exists because the counts a caller
- * actually wants are the ones after the final flush, and by then nm_close has freed
- * the stream — so there is otherwise no moment at which the true totals can be read.
- * Passing NULL is the same as nm_close.
+ * Same as nm_close, but fills *out after the final flush and before releasing the
+ * stream. Exists because the counts a caller actually wants are the ones after the
+ * final flush, and nm_close frees the stream straight after it, so there is otherwise
+ * no moment at which the true totals can be read.
+ *
+ * With out == NULL this is nm_close. With s == NULL it zeroes *out.
  */
 void nm_close_stats(nm_stream *s, nm_stats_t *out);
 

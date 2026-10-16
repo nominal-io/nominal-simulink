@@ -41,9 +41,9 @@ nm_http *nm_http_open(const char *base_url, const char *token,
                       const volatile int64_t *deadline);
 
 /*
- * POST one encoded body, retrying up to `max_attempts` times on transport failure or
- * 5xx, unless the deadline passes first. Blocks; only ever called from the sender
- * thread.
+ * POST one encoded body, making up to `max_attempts` attempts in all. A transport
+ * failure or 5xx is retried, except a certificate failure, and no attempt starts after
+ * the deadline has passed. Blocks. Only ever called from the sender thread.
  */
 void nm_http_post(nm_http *h, const uint8_t *body, size_t len,
                   int max_attempts, nm_http_result *out);

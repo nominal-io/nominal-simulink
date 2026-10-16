@@ -6,9 +6,9 @@
  * on the same machine. Proxy mode moves all of that to another box, leaving the host
  * doing little more than a sendto.
  *
- * Pure encode/decode, no sockets, no allocation. Kept in its own translation unit so a
- * static link into a real-time application drops the decoder as dead code — a
- * Speedgoat target never receives frames, only sends them.
+ * Pure encode/decode, no sockets, no allocation. A Speedgoat target only ever sends
+ * frames. The decoder is here for the tests and as the reference the MATLAB and Go
+ * decoders are checked against.
  *
  *
  * DESIGN
@@ -34,13 +34,13 @@
  * plausible-looking wrong data.
  *
  * Numeric fields are little-endian, not the big-endian "network byte order" convention.
- * That convention governs IP/TCP/UDP header fields; a datagram payload is opaque to the
- * stack, and protobuf, FlatBuffers and Arrow all choose LE for the same reason we do:
- * both ends here are x86-64, and the payload is mostly IEEE-754 doubles that already
- * sit in memory little-endian. Big-endian would mean byte-swapping every value — at
- * 1 kHz across 20 channels, ~160 KB/s of pure swapping on the machine whose lack of
- * headroom is why proxy mode exists at all. The magic is a byte sequence precisely so
- * this choice does not also make packet captures unreadable.
+ * That convention governs IP/TCP/UDP header fields. A datagram payload is opaque to the
+ * stack, and protobuf, FlatBuffers and Arrow also use LE. Here both ends are x86-64,
+ * and the payload is mostly IEEE-754 doubles that already sit in memory little-endian.
+ * Big-endian would mean byte-swapping every value — at 1 kHz across 20 channels,
+ * ~160 KB/s of pure swapping on the machine whose lack of headroom is why proxy mode
+ * exists at all. The magic is a byte sequence precisely so this choice does not also
+ * make packet captures unreadable.
  *
  * Encoders must write LE explicitly rather than memcpy a struct.
  *
@@ -66,9 +66,9 @@
 
 #define NM_FRAME_VERSION 1
 
-/* Datagrams stay under this so IP never fragments them. Fragmentation would turn one
- * lost fragment into a lost frame, which is a worse failure mode than sending more
- * datagrams. */
+/* Datagrams stay under this so IP does not fragment them on a standard 1500-byte
+ * Ethernet MTU. Fragmentation would turn one lost fragment into a lost frame, which is
+ * a worse failure mode than sending more datagrams. */
 #define NM_FRAME_MAX_BYTES 1400
 
 /* Size of the common header, laid out in full further down. Defined here because the
@@ -115,7 +115,7 @@ typedef enum {
  *   4      1    version     NM_FRAME_VERSION
  *   5      1    type        nm_frame_type
  *   6      2    reserved    zero
- *   8      8    session_id  random per stream; distinguishes concurrent models
+ *   8      8    session_id  unique per stream; distinguishes concurrent models
  *   16     8    config_id   hash of the channel list and RID
  */
 
@@ -190,7 +190,7 @@ size_t nm_frame_rows_per_datagram(size_t channel_count);
 
 /* Stable hash of the channel list and RID, for config_id. Must be reproducible by every
  * implementation, so the algorithm is fixed: FNV-1a over RID then each name, each
- * length-prefixed to keep boundaries unambiguous. */
+ * preceded by its length as a little-endian u32 to keep boundaries unambiguous. */
 uint64_t nm_frame_config_id(const char *dataset_rid,
                             const char *const *channel_names,
                             size_t channel_count);
@@ -221,8 +221,8 @@ size_t nm_frame_encode_data(uint8_t *buf, size_t buf_len,
 
 /*
  * Decode just the header. Returns 0 on success, negative if the datagram is too short,
- * has the wrong magic, or an unsupported version. Cheap enough to run before deciding
- * whether to care about a frame.
+ * has the wrong magic, an unsupported version, or an unknown frame type. Cheap enough
+ * to run before deciding whether to care about a frame.
  */
 int nm_frame_decode_header(const uint8_t *buf, size_t len, nm_frame_header *out);
 
@@ -246,7 +246,7 @@ int nm_frame_decode_hello(const uint8_t *buf, size_t len, nm_frame_hello *out);
 
 /*
  * Decode a DATA body. Points into `buf`; values are little-endian float64 and must be
- * read through nm_frame_read_f64 rather than cast, since alignment is not guaranteed.
+ * read through nm_frame_read_row rather than cast, since alignment is not guaranteed.
  */
 typedef struct {
     uint64_t       sequence;

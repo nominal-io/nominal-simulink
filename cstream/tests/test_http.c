@@ -131,7 +131,8 @@ static NM_THREAD_FN(serve_script, arg)
 
 static const char *const NAMES[] = { "a", "b", "c" };
 
-static nm_stream *open_direct(unsigned short port, uint32_t close_timeout_ms)
+static nm_stream *open_direct(unsigned short port, size_t capacity_rows,
+                              uint32_t close_timeout_ms)
 {
     char      url[64];
     nm_config cfg;
@@ -144,7 +145,7 @@ static nm_stream *open_direct(unsigned short port, uint32_t close_timeout_ms)
     cfg.dataset_rid        = "ri.catalog.test.dataset.0";
     cfg.channel_names      = NAMES;
     cfg.channel_count      = 3;
-    cfg.capacity_rows      = 64;
+    cfg.capacity_rows      = capacity_rows;
     cfg.max_batch_delay_ms = 20;
     cfg.close_timeout_ms   = close_timeout_ms;
     return nm_open(&cfg, NULL);
@@ -171,7 +172,7 @@ static void test_close_is_bounded_when_the_server_never_answers(void)
 {
     unsigned short port;
     sock_t         listener = listen_loopback(&port);
-    nm_stream     *s = open_direct(port, 1000);
+    nm_stream     *s = open_direct(port, 64, 1000);
     nm_stats_t     st;
     int64_t        start, elapsed_ms;
 
@@ -215,7 +216,7 @@ static void test_a_later_success_keeps_the_failed_status(void)
     srv.count    = 4;
     nm_thread_start(&server, serve_script, &srv);
 
-    s = open_direct(port, 5000);
+    s = open_direct(port, 64, 5000);
     check(s != NULL, "a direct stream opens against the scripted server");
     if (s == NULL) {
         NM_CLOSESOCK(srv.listener);
@@ -235,6 +236,65 @@ static void test_a_later_success_keeps_the_failed_status(void)
     NM_CLOSESOCK(srv.listener);
 }
 
+/*
+ * rows_dropped is the sum of two counters, one per thread: rows nm_push refused because
+ * the buffer was full, and rows the sender gave up on. Both happen here. Four rows fill
+ * the buffer and six are refused. The four then never get an answer and are dropped
+ * at close.
+ */
+static void test_dropped_rows_counts_both_threads(void)
+{
+    unsigned short port;
+    sock_t         listener = listen_loopback(&port);
+    nm_stream     *s = open_direct(port, 4, 1000);
+    nm_stats_t     st;
+
+    check(s != NULL, "a four-row direct stream opens against the fake server");
+    if (s == NULL) {
+        NM_CLOSESOCK(listener);
+        return;
+    }
+
+    /* The sender holds its rows in the buffer until its request finishes, and this
+     * server never answers, so exactly four rows fit. */
+    push_rows(s, 10, 1000000000LL);
+    check(nm_dropped_rows(s) == 6, "rows refused by the full buffer count as dropped");
+
+    nm_close_stats(s, &st);
+    check(st.rows_pushed == 10 && st.rows_sent == 0 && st.rows_dropped == 10,
+          "rows_dropped adds the sender's losses to the refused rows");
+
+    NM_CLOSESOCK(listener);
+}
+
+/* DIRECT mode needs somewhere to POST, so a missing base URL is refused at open. */
+static void test_open_refuses_a_missing_base_url(void)
+{
+    static const char *const bad_urls[] = { NULL, "" };
+    size_t                   i;
+
+    for (i = 0; i < 2; i++) {
+        nm_config  cfg;
+        nm_status  status = NM_OK;
+        nm_stream *s;
+
+        memset(&cfg, 0, sizeof cfg);
+        cfg.mode          = NM_MODE_DIRECT;
+        cfg.base_url      = bad_urls[i];
+        cfg.token         = "test-not-a-real-token";
+        cfg.dataset_rid   = "ri.catalog.test.dataset.0";
+        cfg.channel_names = NAMES;
+        cfg.channel_count = 3;
+        cfg.capacity_rows = 64;
+
+        s = nm_open(&cfg, &status);
+        check(s == NULL && status == NM_ERR_ARG,
+              i == 0 ? "a NULL base_url is refused as NM_ERR_ARG"
+                     : "an empty base_url is refused as NM_ERR_ARG");
+        nm_close(s);
+    }
+}
+
 int main(void)
 {
 #if defined(_WIN32)
@@ -244,6 +304,8 @@ int main(void)
 
     test_close_is_bounded_when_the_server_never_answers();
     test_a_later_success_keeps_the_failed_status();
+    test_dropped_rows_counts_both_threads();
+    test_open_refuses_a_missing_base_url();
 
     printf("\n%s\n", failures == 0 ? "all passed" : "FAILURES");
     return failures == 0 ? 0 : 1;

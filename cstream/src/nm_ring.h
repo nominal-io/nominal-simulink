@@ -27,8 +27,8 @@ typedef struct {
     size_t   capacity;
     size_t   channel_count;
 
-    /* Written by the producer, read by the consumer, and vice versa. Access only
-     * through NM_LOAD_ACQUIRE / NM_STORE_RELEASE. */
+    /* The producer writes head and the consumer reads it. tail is the reverse. Access
+     * only through NM_LOAD_ACQUIRE / NM_STORE_RELEASE. */
     size_t head;
     size_t tail;
 } nm_ring;

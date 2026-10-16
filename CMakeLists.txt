@@ -9,9 +9,9 @@ project(nominal-simulink
         DESCRIPTION "Nominal streaming client for Simulink and real-time targets"
         LANGUAGES C)
 
-# One definition, three toolchains: the host compiler for desktop, qcc for QNX
-# Neutrino 7.1 (Simulink Real-Time R2021a-R2025b), and Speedgoat's Linux
-# cross-compiler for Antelope RTOS (R2026a+). Select with -DCMAKE_TOOLCHAIN_FILE.
+# Desktop builds use the host compiler. For QNX Neutrino 7.1 (Simulink Real-Time
+# R2021a-R2025b), pass -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-qnx710-x86_64.cmake.
+# Antelope RTOS (R2026a+) has no toolchain file yet.
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 

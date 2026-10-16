@@ -49,8 +49,9 @@ static void put_row_count_ff(uint8_t *buf)
  * different id, and has every frame rejected as an unknown config. So pin the
  * algorithm to its canonical vector rather than only checking self-consistency.
  *
- * FNV-1a/64 of the single byte 'a' is 0xaf63dc4c8601ec8c. Reproduced here by hashing a
- * one-character name with no RID, so the field framing is exercised too.
+ * FNV-1a/64 of the single byte 'a' is 0xaf63dc4c8601ec8c. config_id length-prefixes
+ * each field, so the test cannot use that vector directly. It hashes an empty RID and
+ * the name "a" instead, which also exercises the field framing.
  */
 static void test_fnv1a_matches_the_spec(void)
 {
@@ -367,6 +368,20 @@ static void test_open_refuses_a_mapping_too_large_to_send(void)
     check(s == NULL && status == NM_ERR_TOO_LARGE,
           "nm_open refuses a channel list too large for one datagram");
     nm_close(s);
+
+    /* More channels than one DATA row can carry gets the same status, so a user sees
+     * one clear message whichever limit the model hits. */
+    {
+        static const char *many[NM_FRAME_MAX_CHANNELS + 1];
+
+        for (i = 0; i < NM_FRAME_MAX_CHANNELS + 1; i++) {
+            many[i] = "x";
+        }
+        s = open_proxy(many, NM_FRAME_MAX_CHANNELS + 1, 16, &status);
+        check(s == NULL && status == NM_ERR_TOO_LARGE,
+              "nm_open refuses more channels than one row can carry");
+        nm_close(s);
+    }
 
     s = open_proxy(NAMES, NCH, 16, &status);
     check(s != NULL && status == NM_OK, "and still opens one that fits");

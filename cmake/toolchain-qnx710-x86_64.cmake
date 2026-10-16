@@ -7,8 +7,8 @@
 #         -DCMAKE_TOOLCHAIN_FILE=cmake/toolchain-qnx710-x86_64.cmake
 #
 # The compiler is qcc, QNX's driver around gcc. It must match the version bundled with
-# the Simulink Real-Time Target Support Package — 7.1.0 for R2021a onward, which is
-# constant across that whole release range, so this is one toolchain rather than five.
+# the Simulink Real-Time Target Support Package, which is 7.1.0 for every release from
+# R2021a through R2025b, so one toolchain file covers all ten.
 
 set(CMAKE_SYSTEM_NAME QNX)
 set(CMAKE_SYSTEM_VERSION 7.1.0)
@@ -22,7 +22,7 @@ endif()
 set(QNX_HOST   "$ENV{QNX_HOST}")
 set(QNX_TARGET "$ENV{QNX_TARGET}")
 
-# -Vgcc_nto<arch> selects the target variant. x86_64 uses the `o` suffix convention.
+# -V selects the target variant: gcc_ntox86_64 for x86-64.
 set(QNX_COMPILER_TARGET gcc_ntox86_64)
 
 if(CMAKE_HOST_WIN32)
@@ -48,7 +48,8 @@ set(CMAKE_SHARED_LINKER_FLAGS_INIT "-V${QNX_COMPILER_TARGET}")
 set(CMAKE_SYSROOT "${QNX_TARGET}")
 set(CMAKE_FIND_ROOT_PATH "${QNX_TARGET}/x86_64" "${QNX_TARGET}")
 
-# Look for programs on the host, but headers and libraries only in the sysroot --
+# Look for programs in the sysroot first and then on the host, but for headers and
+# libraries only in the sysroot --
 # otherwise a host libcurl gets picked up and the link fails confusingly late.
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM BEFORE)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)

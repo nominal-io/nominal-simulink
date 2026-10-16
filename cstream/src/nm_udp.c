@@ -83,7 +83,7 @@ nm_udp *nm_udp_open(const char *host, uint16_t port, char *err, size_t err_len)
         err[0] = '\0';
     }
     if (host == NULL || host[0] == '\0' || port == 0) {
-        snprintf(err, err_len, "a proxy host and port are required");
+        snprintf(err, err_len, "a relay host and port are required");
         return NULL;
     }
 
@@ -118,9 +118,6 @@ nm_udp *nm_udp_open(const char *host, uint16_t port, char *err, size_t err_len)
         if (fd == NM_INVALID_SOCKET) {
             continue;
         }
-        /* Connecting a datagram socket fixes the peer: the kernel caches the route,
-         * send() replaces sendto(), and an ICMP port-unreachable comes back as an
-         * error instead of vanishing. */
         if (connect(fd, ai->ai_addr, (int)ai->ai_addrlen) != 0) {
             nm_close_socket(fd);
             continue;
@@ -134,7 +131,7 @@ nm_udp *nm_udp_open(const char *host, uint16_t port, char *err, size_t err_len)
     }
 
     if (u->fd == NM_INVALID_SOCKET) {
-        snprintf(err, err_len, "could not connect a UDP socket to %s:%u (%d)",
+        snprintf(err, err_len, "could not open a socket to the relay at %s:%u (error %d)",
                  host, (unsigned)port, nm_socket_errno);
         goto fail;
     }

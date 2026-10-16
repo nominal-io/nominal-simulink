@@ -1,9 +1,9 @@
 /*
  * nm_udp.h — the proxy-mode transport.
  *
- * A connected UDP socket and non-blocking sends. That is the whole point of proxy mode:
- * where nm_http pays for protobuf, TLS and an HTTP round trip, this pays for a memcpy
- * into a datagram and one syscall.
+ * Proxy mode's transport: a connected UDP socket with non-blocking sends. Where direct
+ * mode pays for protobuf, TLS and an HTTP round trip, this pays for building a frame
+ * and one syscall.
  *
  * Sends are non-blocking so a full socket buffer costs a dropped frame rather than a
  * stalled sender thread. UDP has no retransmission here by design — buffering for

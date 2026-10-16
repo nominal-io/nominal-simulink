@@ -87,8 +87,8 @@ static void put_tag(nm_buf *b, uint32_t field, uint32_t wire_type)
 static void put_fixed64(nm_buf *b, double value)
 {
     /* Protobuf fixed64 is little-endian. Assemble byte by byte so this does not
-     * depend on host endianness — QNX and Antelope are both x86-64 today, but the
-     * cost of not caring is two lines. */
+     * depend on host endianness. QNX and Antelope are both x86-64 today, and handling
+     * either byte order costs two lines. */
     uint64_t bits;
     uint8_t  out[8];
     int      i;

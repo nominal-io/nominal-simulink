@@ -7,9 +7,9 @@
  *   caller's thread    nm_push -> nm_ring_push          bounded, no alloc, no block
  *   sender thread      ring -> nm_encode -> nm_http     everything slow lives here
  *
- * The sender encodes straight out of ring storage. The ring stores rows as
- * timestamp + one value per channel, row-major, which is exactly the layout
- * nm_encode_request reads, so a batch reaches the wire without an intermediate copy.
+ * The sender encodes straight out of ring storage. The ring keeps timestamps in one
+ * array and values row-major in another, which is exactly the layout
+ * nm_encode_request reads, so a batch needs no staging copy before it is encoded.
  */
 
 #include "nominal_stream.h"
@@ -23,6 +23,7 @@
 
 #include <curl/curl.h>
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #if !defined(_WIN32)
@@ -34,13 +35,14 @@
  * single failure loses a modest amount of data and a single encode stays quick. */
 #define NM_MAX_ROWS_PER_REQUEST 4096
 
-/* A malformed body reports as 500 here, so retrying cannot be persistent -- see
- * nm_http.h. Three attempts absorbs a transient fault without wedging the queue. */
+/* The server answers a malformed body with 500, which looks retryable, so attempts are
+ * capped -- see nm_http.h. Three attempts absorb a transient fault without stalling
+ * the queue. */
 #define NM_MAX_ATTEMPTS 3
 
 /* How often proxy mode repeats HELLO. UDP is lossy and a relay may restart mid-run,
- * so the channel mapping is re-announced rather than sent once; this bounds how long a
- * restarted relay discards data. One second costs a few dozen bytes. */
+ * so the channel mapping is re-announced rather than sent once. The interval bounds how
+ * long a restarted relay discards data, at a cost of one HELLO datagram per second. */
 #define NM_HELLO_INTERVAL_MS 1000
 
 struct nm_stream {
@@ -76,13 +78,17 @@ struct nm_stream {
     volatile int64_t close_deadline;
     uint32_t         close_timeout_ms;
 
-    /* Counters. Each is written by exactly one thread -- pushed, accepted and
-     * dropped-on-full by the producer, the rest by the sender -- and read by nm_stats.
-     * Aligned 64-bit reads are atomic on the targets we build for, so nm_stats needs no
-     * lock and stays safe to call from the same real-time context as nm_push. */
+    /* Counters. Each is written by exactly one thread: pushed, accepted and
+     * dropped_full by the producer, the rest by the sender (or by nm_close, once the
+     * sender has stopped). Dropped rows are split in two so that neither thread does a
+     * read-modify-write on a counter the other also writes. nm_stats and
+     * nm_dropped_rows report their sum as rows_dropped. Aligned 64-bit reads are atomic
+     * on the targets we build for, so nm_stats needs no lock and stays safe to call
+     * from the same real-time context as nm_push. */
     uint64_t rows_pushed;
     uint64_t rows_accepted;
-    uint64_t rows_dropped;
+    uint64_t rows_dropped_full;   /* producer: refused because the buffer was full */
+    uint64_t rows_dropped_send;   /* sender: failed to send, or abandoned at close */
     uint64_t rows_sent;
     uint64_t requests_ok;
     uint64_t requests_failed;
@@ -101,8 +107,8 @@ static int g_curl_ready = 0;
 /* ------------------------------------------------------------------ helpers */
 
 /* Copy the caller's channel names into one block so their storage need not outlive
- * nm_open, and so the sender never chases a dangling pointer. Tags are not copied:
- * the v1 API takes none, and the encoder reads them only during nm_open. */
+ * nm_open, and so the sender never chases a dangling pointer. Tags are left empty
+ * because nm_config takes none. */
 static int copy_channels(nm_stream *s, const char *const *names, size_t count)
 {
     size_t total = 0, i;
@@ -170,8 +176,8 @@ static void send_hello(nm_stream *s)
 /*
  * Drain the ring into datagrams.
  *
- * Rows are packed until the MTU is reached, so the syscall count falls as the channel
- * count does rather than being one per row. A send failure — a full socket buffer, or
+ * Each datagram carries as many rows as fit in NM_FRAME_MAX_BYTES, so there is one send
+ * per datagram rather than one per row. A send failure — a full socket buffer, or
  * the relay's port closed — costs those rows: retransmission would need buffering and
  * acknowledgements, which is precisely the expense proxy mode exists to avoid.
  */
@@ -194,7 +200,7 @@ static void drain_proxy(nm_stream *s)
         if (n == 0 || sent_rows == 0) {
             /* Only reachable if a single row cannot fit a datagram, which means the
              * channel count is too high for proxy mode. Drop rather than spin. */
-            s->rows_dropped += rows;
+            s->rows_dropped_send += rows;
             nm_ring_consume(&s->ring, rows);
             continue;
         }
@@ -203,10 +209,11 @@ static void drain_proxy(nm_stream *s)
             s->requests_ok += 1;
             s->rows_sent   += sent_rows;
         } else {
-            s->requests_failed += 1;
-            s->rows_dropped    += sent_rows;
+            s->requests_failed   += 1;
+            s->rows_dropped_send += sent_rows;
             snprintf(s->last_error, sizeof s->last_error,
-                     "could not send a datagram to the proxy");
+                     "could not send a packet to the relay. Check that it is running "
+                     "and reachable");
         }
 
         /* Advance regardless: the sequence numbers a relay sees are what let it
@@ -237,14 +244,15 @@ static void abandon_remaining(nm_stream *s)
         nm_ring_consume(&s->ring, rows);
         total += rows;
     }
-    s->rows_dropped += total;
+    s->rows_dropped_send += total;
 
     /* An earlier failure is the more useful explanation, so it is kept if there is
      * one. With none, a slow network is all that is left to blame. */
     if (total > 0 && s->last_error[0] == '\0') {
         snprintf(s->last_error, sizeof s->last_error,
-                 "%llu rows were still buffered when the %u ms allowed for the final "
-                 "flush ran out", (unsigned long long)total, (unsigned)s->close_timeout_ms);
+                 "%llu rows were still unsent when the %u ms allowed at close ran out. "
+                 "Check that Nominal is reachable",
+                 (unsigned long long)total, (unsigned)s->close_timeout_ms);
     }
 }
 
@@ -275,9 +283,10 @@ static void drain_direct(nm_stream *s)
             rows = NM_MAX_ROWS_PER_REQUEST;
         }
 
-        /* Shrink until the batch fits the buffer we reserved at open. Values that
-         * happen to be zero encode shorter, so the exact size is only knowable now;
-         * halving converges in a few steps and cannot fail. */
+        /* Shrink until the batch fits the buffer reserved at open. That buffer allows
+         * 256 bytes per channel for the name and length prefixes, so very long channel
+         * names can overflow it. Halving stops at one row, and a row that still does
+         * not fit is handled below. */
         while (rows > 1 &&
                nm_encoded_size(s->channels, s->channel_count, timestamps, rows, values)
                    > s->encode_cap) {
@@ -290,7 +299,7 @@ static void drain_direct(nm_stream *s)
         if (encoded == 0) {
             /* A single row that will not fit cannot be made smaller. Discard it
              * rather than spin on it forever. */
-            s->rows_dropped += rows;
+            s->rows_dropped_send += rows;
             nm_ring_consume(&s->ring, rows);
             continue;
         }
@@ -312,8 +321,8 @@ static void drain_direct(nm_stream *s)
             /* Retries are already exhausted inside nm_http_post. Holding the rows
              * would wedge the ring behind a request that may never succeed, so they
              * are counted as lost and released. */
-            s->requests_failed += 1;
-            s->rows_dropped    += rows;
+            s->requests_failed   += 1;
+            s->rows_dropped_send += rows;
         }
 
         nm_ring_consume(&s->ring, rows);
@@ -356,8 +365,8 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
     nm_status  st = NM_OK;
     size_t     worst_case;
 
-    /* Common requirements. The mode then adds its own: DIRECT needs somewhere to POST
-     * and a credential, PROXY needs a relay to send to and neither of those. */
+    /* Common requirements, then each mode's own. DIRECT needs a base URL to POST to
+     * and a credential. PROXY needs a relay to send to and neither of those. */
     if (cfg == NULL || cfg->dataset_rid == NULL || cfg->channel_names == NULL ||
         cfg->channel_count == 0 || cfg->capacity_rows == 0) {
         st = NM_ERR_ARG;
@@ -372,10 +381,11 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
         /* One row must fit a datagram, and that depends only on the channel count.
          * Failing here is far kinder than discovering it per-batch at runtime. */
         if (nm_frame_rows_per_datagram(cfg->channel_count) == 0) {
-            st = NM_ERR_ARG;
+            st = NM_ERR_TOO_LARGE;
             goto done;
         }
-    } else if (cfg->token == NULL || cfg->token[0] == '\0') {
+    } else if (cfg->base_url == NULL || cfg->base_url[0] == '\0' ||
+               cfg->token == NULL || cfg->token[0] == '\0') {
         st = NM_ERR_ARG;
         goto done;
     }
@@ -439,9 +449,10 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
             goto fail;
         }
     } else {
-        /* Reserve the encode buffer for the largest request we will build. Roughly 32
-         * bytes per point covers tag, length, a full-width timestamp and a fixed64
-         * value; 256 per channel covers the name and the nested length prefixes. */
+        /* Reserve the encode buffer from an estimate. 32 bytes per point covers tag,
+         * length, a full-width timestamp and a fixed64 value. 256 per channel covers a
+         * name of up to about 240 bytes plus the nested length prefixes. drain_direct
+         * shrinks any batch that still does not fit. */
         {
             size_t rows = cfg->capacity_rows < NM_MAX_ROWS_PER_REQUEST
                         ? cfg->capacity_rows : NM_MAX_ROWS_PER_REQUEST;
@@ -513,7 +524,7 @@ int nm_push(nm_stream *s, int64_t timestamp_nanos, const double *values, size_t 
         return 0;
     }
 
-    s->rows_dropped += 1;
+    s->rows_dropped_full += 1;
     return 1;
 }
 
@@ -525,7 +536,7 @@ void nm_stats(const nm_stream *s, nm_stats_t *out)
     out->rows_pushed      = s->rows_pushed;
     out->rows_accepted    = s->rows_accepted;
     out->rows_sent        = s->rows_sent;
-    out->rows_dropped     = s->rows_dropped;
+    out->rows_dropped     = s->rows_dropped_full + s->rows_dropped_send;
     out->requests_ok      = s->requests_ok;
     out->requests_failed  = s->requests_failed;
     out->last_http_status = s->last_status;
@@ -534,7 +545,7 @@ void nm_stats(const nm_stream *s, nm_stats_t *out)
 
 uint64_t nm_dropped_rows(const nm_stream *s)
 {
-    return s != NULL ? s->rows_dropped : 0;
+    return s != NULL ? s->rows_dropped_full + s->rows_dropped_send : 0;
 }
 
 void nm_close(nm_stream *s)
@@ -609,13 +620,14 @@ const char *nm_strerror(nm_status status)
 {
     switch (status) {
     case NM_OK:            return "ok";
-    case NM_ERR_ARG:       return "invalid argument";
-    case NM_ERR_ALLOC:     return "could not reserve buffers";
-    case NM_ERR_THREAD:    return "could not start sender thread";
-    case NM_ERR_TRANSPORT: return "transport not initialised";
+    case NM_ERR_ARG:       return "a required setting is missing or invalid";
+    case NM_ERR_ALLOC:     return "could not reserve memory for the buffer";
+    case NM_ERR_THREAD:    return "could not start the thread that sends rows";
+    case NM_ERR_TRANSPORT: return "could not set up the HTTPS client or the socket to the "
+                                  "relay";
     case NM_ERR_CLOSED:    return "stream is closed";
     case NM_ERR_TOO_LARGE: return "the dataset RID and channel names do not fit in one "
-                                  "proxy datagram; use fewer or shorter channel names";
+                                  "packet to the relay";
     }
     return "unknown status";
 }

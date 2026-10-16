@@ -1,14 +1,14 @@
 /*
- * nmstream-demo — streams a few seconds of synthetic signal into a Nominal dataset.
+ * nmstream-demo — pushes one second of synthetic signal into a Nominal dataset.
  *
- * This is the end-to-end proof for the C client: protobuf encoding, the ring, the
- * sender thread and the HTTPS POST, exercised together against the real server before
- * any Simulink code exists.
+ * Exercises the C client end to end without Simulink: the ring, the sender thread, and
+ * either the HTTPS POST to Nominal (direct) or frames to a relay (proxy, -p).
  *
- *   set NOMINAL_TOKEN=...
- *   nmstream-demo <dataset-rid> [base-url]
+ *   set NOMINAL_TOKEN=...      (a Nominal API key, direct mode only)
+ *   nmstream-demo [-p host:port] <dataset-rid> [base-url]
  *
- * Writes about 2000 points across three channels, so point it at something disposable.
+ * Writes 1000 rows across three channels (3000 points), so point it at something
+ * disposable.
  */
 
 #include "nominal_stream.h"
@@ -17,22 +17,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* The library's own sleep is internal, and widening the public API for an example
- * would be the tail wagging the dog. */
-#if defined(_WIN32)
-#include <windows.h>
-static void nm_demo_sleep_ms(unsigned ms) { Sleep(ms); }
-#else
-#include <time.h>
-static void nm_demo_sleep_ms(unsigned ms)
-{
-    struct timespec ts;
-    ts.tv_sec  = (time_t)(ms / 1000u);
-    ts.tv_nsec = (long)(ms % 1000u) * 1000000L;
-    nanosleep(&ts, NULL);
-}
-#endif
 
 #define ROWS      1000
 #define CHANNELS  3
@@ -49,7 +33,7 @@ int main(int argc, char **argv)
     const char *base  = "https://api.gov.nominal.io/api";
 
     /* -p host:port switches to proxy mode, where this process sends datagrams and a
-     * relay does the protobuf, TLS and HTTP. No token is needed: the dataset RID
+     * relay does the protobuf, TLS and HTTP. No API key is needed: the dataset RID
      * travels in the frames and the credential stays on the relay. */
     const char *proxy_host = NULL;
     uint16_t    proxy_port = 0;
@@ -87,12 +71,14 @@ int main(int argc, char **argv)
     if (rid == NULL) {
         fprintf(stderr,
                 "usage: nmstream-demo [-p host:port] <dataset-rid> [base-url]\n"
-                "  no -p   direct HTTPS to Nominal; needs NOMINAL_TOKEN\n"
-                "  -p      send frames to a relay instead; no token needed\n");
+                "  no -p   send directly to Nominal over HTTPS (set NOMINAL_TOKEN to an "
+                "API key)\n"
+                "  -p      send to a relay instead (no API key needed)\n");
         return 2;
     }
     if (proxy_host == NULL && (token == NULL || token[0] == '\0')) {
-        fprintf(stderr, "direct mode needs NOMINAL_TOKEN in the environment\n");
+        fprintf(stderr, "direct mode needs a Nominal API key. Set NOMINAL_TOKEN, or use "
+                        "-p to send through a relay.\n");
         return 2;
     }
 
@@ -115,8 +101,8 @@ int main(int argc, char **argv)
         printf("mode          = direct -> %s\n", base);
     }
 
-    /* NULL means the platform's own trust source, which on this Windows build is
-     * Schannel and the Windows certificate store. An RTOS has no such store, so
+    /* NULL means the platform's own trust store (on Windows, Schannel and the Windows
+     * certificate store). An RTOS has no such store, so
      * NOMINAL_CA_BUNDLE exists for the targets, where an explicit bundle is the only
      * option. */
     cfg.ca_bundle_path = getenv("NOMINAL_CA_BUNDLE");
@@ -163,21 +149,12 @@ int main(int argc, char **argv)
         }
     }
 
-    printf("\npushed %d rows (%d discarded at the ring)\n", ROWS, dropped);
+    printf("\npushed %d rows (%d discarded because the buffer was full)\n", ROWS, dropped);
 
-    /* nm_close flushes, but it also frees the stream -- so poll until the sender has
-     * accounted for every row, then report. Otherwise a total transport failure looks
-     * exactly like success: the loop still completes and the process still exits 0.
-     *
-     * Against rows_pushed, not rows_accepted: rows_dropped also counts rows refused at
-     * the ring, so comparing with the accepted count could stop the wait early. */
-    for (i = 0; i < 100; i++) {
-        nm_stats(s, &stats);
-        if (stats.rows_sent + stats.rows_dropped >= stats.rows_pushed) {
-            break;
-        }
-        nm_demo_sleep_ms(100);
-    }
+    /* Flush, then report the totals after that flush. Reporting before close would show
+     * whatever happened to be sent so far, so a total transport failure could look like
+     * success. */
+    nm_close_stats(s, &stats);
 
     printf("\naccepted=%llu sent=%llu dropped=%llu  requests ok=%llu failed=%llu\n",
            (unsigned long long)stats.rows_accepted,
@@ -190,14 +167,25 @@ int main(int argc, char **argv)
         printf("last error       = %s\n", stats.last_error);
     }
 
-    nm_close(s);
-
-    if (stats.requests_failed > 0 || stats.rows_sent == 0) {
-        printf("\nnothing landed -- see the status and error above.\n");
+    if (stats.rows_sent == 0) {
+        printf("\nnothing landed. See the status and error above.\n");
+        return 1;
+    }
+    if (stats.rows_dropped > 0) {
+        printf("\n%llu of %d rows were not sent. See the status and error above.\n",
+               (unsigned long long)stats.rows_dropped, ROWS);
         return 1;
     }
 
-    printf("\ndone. Points appear under %s / %s / %s;\n", names[0], names[1], names[2]);
-    printf("ingest is not instant, so allow a moment.\n");
+    if (cfg.mode == NM_MODE_PROXY) {
+        /* rows_sent counts rows handed to the socket. Whether they reach Nominal is
+         * up to the relay, so claim no more than that. */
+        printf("\ndone. Handed %llu rows to the relay.\n",
+               (unsigned long long)stats.rows_sent);
+        return 0;
+    }
+
+    printf("\ndone. Points appear under %s / %s / %s.\n", names[0], names[1], names[2]);
+    printf("They can take a moment to show up.\n");
     return 0;
 }

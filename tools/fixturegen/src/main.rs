@@ -1,10 +1,12 @@
-//! Phase 0a: capture a byte-exact reference of what the Rust client puts on the wire,
-//! so the C encoder can be tested offline against it.
+//! Capture a byte-exact reference of what the Rust client puts on the wire, so the C
+//! encoder can be tested offline against it.
 //!
-//! Emits, for one known WriteRequestNominal:
+//! Prints, for one known WriteRequestNominal:
 //!   1. the raw protobuf encoding
-//!   2. the snappy-framed body actually sent
-//!   3. the exact method, URI and header set
+//!   2. the method, URI and headers the client sends
+//!   3. the body as sent (zstd since nominal-streaming 0.9.6)
+//!
+//! and writes the identity, zstd and snappy bodies to cstream/tests/fixtures.
 
 use std::collections::HashMap;
 
@@ -120,5 +122,5 @@ fn main() {
     }
 }
 
-/// Golden fixtures live in the new repo, not this scratch crate.
+/// Relative to tools/fixturegen, the directory `just fixtures` runs this from.
 const FIXTURE_DIR: &str = "../../cstream/tests/fixtures";

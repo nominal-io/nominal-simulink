@@ -92,8 +92,8 @@ nm_http *nm_http_open(const char *base_url, const char *token,
     snprintf(auth, auth_len, "Authorization: Bearer %s", token);
 
     h->headers = curl_slist_append(h->headers, "Content-Type: application/x-protobuf");
-    /* The server accepts identity, zstd, snappy, or no header at all; we send
-     * uncompressed so that libzstd never has to cross-compile for QNX. */
+    /* The server accepts identity, zstd, snappy, or no header at all. Bodies go
+     * uncompressed, which keeps libzstd out of the QNX cross-compile. */
     h->headers = curl_slist_append(h->headers, "Content-Encoding: identity");
     h->headers = curl_slist_append(h->headers, auth);
     /* libcurl otherwise adds "Expect: 100-continue" for larger bodies, which costs a
@@ -175,7 +175,7 @@ void nm_http_post(nm_http *h, const uint8_t *body, size_t len,
         if (deadline_passed(h)) {
             if (attempt == 1) {
                 snprintf(out->error, sizeof out->error,
-                         "not sent: the final flush ran out of time");
+                         "not sent: the time allowed at close ran out");
             }
             return;
         }
@@ -188,7 +188,7 @@ void nm_http_post(nm_http *h, const uint8_t *body, size_t len,
             /* A retry cut short says less than the failure that caused it. */
             if (attempt == 1) {
                 snprintf(out->error, sizeof out->error,
-                         "abandoned: the final flush ran out of time");
+                         "cut short: the time allowed at close ran out");
                 out->status = 0;
             }
             return;
@@ -200,7 +200,8 @@ void nm_http_post(nm_http *h, const uint8_t *body, size_t len,
              * demo can set; ca_bundle_path is only visible to code calling nm_open. */
             if (rc == CURLE_PEER_FAILED_VERIFICATION || rc == CURLE_SSL_CACERT_BADFILE) {
                 snprintf(out->error, sizeof out->error,
-                         "%s -- point NOMINAL_CA_BUNDLE at a CA bundle (libcurl: %s)",
+                         "%s. Set NOMINAL_CA_BUNDLE to a PEM file of the CA certificates "
+                         "to trust (%s)",
                          curl_easy_strerror(rc), curl_version());
             } else {
                 snprintf(out->error, sizeof out->error, "%s", curl_easy_strerror(rc));

@@ -1,16 +1,18 @@
 /*
  * nm_encode.h — protobuf encoding for WriteRequestNominal.
  *
- * Hand-written rather than generated. The schema is six messages of scalar fields
- * (proto/nominal_write.proto), and the repeated fields are streaming-sized, which would
+ * Hand-written rather than generated. The encoder writes six messages from
+ * proto/nominal_write.proto (WriteRequestNominal down to DoublePoint) plus
+ * google.protobuf.Timestamp, and the repeated fields are streaming-sized, which would
  * push a generator like nanopb into callback-based encoding. Encoding straight into a
  * caller-owned buffer is what lets nm_push() promise never to allocate, so we keep
  * direct control of the bytes.
  *
  * Correctness is pinned by tests/fixtures/body_identity.pb — a byte-exact capture of
- * what the Rust client produces for a known input. That fixture, regenerated against the
- * current nominal-streaming, is the real guard against schema drift; generated code
- * would not have caught the change that actually happened (a content-encoding switch).
+ * what the Rust client produces for a known input. Regenerating the fixtures against the
+ * current nominal-streaming (tools/fixturegen) is the guard against protocol drift. It
+ * caught the switch from snappy to zstd body encoding, which generated code would have
+ * missed.
  *
  * Encoding is two-pass: measure, then write. Protobuf length-prefixes every nested
  * message, so the alternative is writing backwards or memmoving, and for a schema this

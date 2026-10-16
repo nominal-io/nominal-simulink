@@ -1,11 +1,13 @@
 /*
  * nm_atomic.h — the two atomic operations the ring buffer needs, and nothing else.
  *
- * C11 <stdatomic.h> would be the obvious answer, but MSVC only grew usable support
- * recently and we need this to compile with qcc 7.1 (gcc 8.3) as well. The shim is
+ * C11 <stdatomic.h> would be the obvious answer, but MSVC supports it only from Visual
+ * Studio 2022 17.5, and then as an experimental option, and we need this to compile
+ * with qcc 7.1 (gcc 8.3) as well. The shim is
  * small enough that avoiding the portability question is cheaper than fighting it.
  *
- * Both targets are x86-64, where aligned word-sized loads and stores are already
+ * Both real-time targets, QNX and Antelope, are x86-64, as is the Windows build. There,
+ * aligned word-sized loads and stores are already
  * atomic and the hardware memory model gives acquire/release ordering on ordinary
  * accesses. What remains is stopping the *compiler* from reordering them.
  */

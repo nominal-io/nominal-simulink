@@ -42,8 +42,9 @@ int nm_ring_push(nm_ring *r, int64_t timestamp_nanos, const double *values)
 {
     size_t head, tail, slot;
 
-    /* head is ours alone, so it needs no synchronisation to read. tail moves under
-     * the consumer, and an acquire load is what makes its writes visible here. */
+    /* head is ours alone, so it needs no synchronisation to read. The acquire load on
+     * tail pairs with the consumer's release in nm_ring_consume, so the consumer has
+     * finished reading a slot before we overwrite it. */
     head = r->head;
     tail = NM_LOAD_ACQUIRE(&r->tail);
 
