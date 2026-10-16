@@ -55,6 +55,9 @@ classdef (Abstract) BlocksetTestCase < matlab.unittest.TestCase
             model = name;
             blk = [name '/sink'];
             add_block('nominal_lib/Nominal Stream Sink', blk);
+            % The block's default 1 ms is not a multiple of the 10 ms fixed step below,
+            % and Simulink refuses the model.
+            set_param(blk, 'sampleTime', '0.01');
             if ~isempty(varargin)
                 set_param(blk, varargin{:});
             end

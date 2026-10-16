@@ -214,10 +214,16 @@ function make_library()
     % Now that every mask parameter exists, point the S-function at them. Doing this
     % last is what lets mdlInitializeSizes evaluate real values and size the ports to
     % match the dialog, rather than leaving the default one-in-one-out shape.
+    %
+    % The text ones go through convertStringsToChars so that "double quotes" work as
+    % well as 'single'. A string reaches a C S-function as something it cannot read as
+    % text; it used to read as empty, which for the URL meant silently using the default
+    % instance. Not char(), which would turn a mistyped number into a character and hide
+    % the mistake from the S-function's own check.
     set_param(blockPath, 'Parameters', ...
-        ['channels, datasetRid, baseUrl, sampleTime, ' ...
-         'capacityRows, timeMode, showDropped, ' ...
-         'mode, proxyHost, proxyPort']);
+        ['convertStringsToChars(channels), convertStringsToChars(datasetRid), ' ...
+         'convertStringsToChars(baseUrl), sampleTime, capacityRows, timeMode, ' ...
+         'showDropped, mode, convertStringsToChars(proxyHost), proxyPort']);
 
 
     % Apply it once now, so a freshly dragged block starts with the right fields greyed

@@ -69,6 +69,31 @@ classdef SinkBlockTest < BlocksetTestCase
             sim(model);
         end
 
+        function doubleQuotedTextWorks(~)
+            % "..." is a string, which a C S-function cannot read as text. It used to
+            % arrive as empty: a misleading "channel list is empty", and for the URL a
+            % silent fall back to the default instance.
+            model = BlocksetTestCase.sinkModel('nm_sink_dquote', ...
+                'channels',   '"smoke.a, smoke.b, smoke.c"', ...
+                'datasetRid', '"ri.catalog.test.dataset.0"', ...
+                'mode',       'Via proxy', ...
+                'proxyHost',  '"127.0.0.1"', ...
+                'proxyPort',  '1');
+            SinkBlockTest.feedConstant(model);
+            sim(model);
+        end
+
+        function aNonTextUrlIsAnErrorNotTheDefault(tc)
+            [model, blk] = SinkBlockTest.directModel('nm_sink_badurl');
+            set_param(blk, 'baseUrl', '42');
+            try
+                sim(model);
+                tc.verifyFail('a numeric API base URL ran, so it fell back to a default');
+            catch err
+                tc.verifySubstring(allMessages(err), 'API base URL must be text');
+            end
+        end
+
         function runsInAcceleratorMode(tc)
             % Accelerator mode compiles the model into a MEX of its own, which calls back
             % into the S-function. Users reach for it on long runs, and it needs no
@@ -110,5 +135,13 @@ classdef SinkBlockTest < BlocksetTestCase
             add_block('simulink/Sources/Constant', [model '/src'], 'Value', '[1 2 3]');
             add_line(model, 'src/1', 'sink/1');
         end
+    end
+end
+
+function s = allMessages(err)
+% Simulink wraps the S-function's own message as a cause, so search them all.
+    s = err.message;
+    for i = 1:numel(err.cause)
+        s = [s newline allMessages(err.cause{i})]; %#ok<AGROW>
     end
 end

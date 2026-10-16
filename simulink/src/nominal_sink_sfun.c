@@ -84,6 +84,28 @@ typedef struct {
 
 /* ------------------------------------------------------------------ helpers */
 
+/*
+ * Check a text parameter really is text, reporting it by its dialog label if not.
+ *
+ * The mask converts strings to char on the way in, so single and double quotes both
+ * arrive as char. Anything still not char -- a number, say -- used to be read as empty,
+ * which for the URL meant silently writing to the default instance instead of the one
+ * the user named.
+ */
+static int require_text(SimStruct *S, int index, const char *label, const char *example)
+{
+    static char    msg[192];
+    const mxArray *a = ssGetSFcnParam(S, index);
+
+    if (a != NULL && mxIsChar(a)) {
+        return 1;
+    }
+    snprintf(msg, sizeof msg, "Nominal Stream Sink: %s must be text in quotes, for "
+                              "example %s.", label, example);
+    ssSetErrorStatus(S, msg);
+    return 0;
+}
+
 /* Copy a string parameter out of its mxArray. Caller frees. */
 static char *param_string(SimStruct *S, int index)
 {
@@ -208,6 +230,9 @@ static void mdlInitializeSizes(SimStruct *S)
         }
     }
 
+    if (!require_text(S, P_CHANNELS, "Channel names", "'engine.rpm, engine.egt'")) {
+        return;
+    }
     csv   = param_string(S, P_CHANNELS);
     count = split_names(csv, &storage, &names);
     free(csv);
@@ -313,6 +338,15 @@ static void mdlStart(SimStruct *S)
         return;
     }
 
+    if (!require_text(S, P_DATASET, "Dataset RID", "'ri.catalog.<...>'")) {
+        return;
+    }
+    if (mode == MODE_PROXY
+            ? !require_text(S, P_PROXY_HOST, "Proxy host", "'127.0.0.1'")
+            : !require_text(S, P_BASE_URL, "API base URL", "'https://api.gov.nominal.io/api'")) {
+        return;
+    }
+
     csv        = param_string(S, P_CHANNELS);
     rid        = param_string(S, P_DATASET);
     url        = param_string(S, P_BASE_URL);
@@ -356,9 +390,16 @@ static void mdlStart(SimStruct *S)
         cfg.proxy_host = proxy_host;
         cfg.proxy_port = (uint16_t)port;
     } else {
+        /* No default to fall back on: a blank URL is a mistake, and quietly
+         * substituting one instance's URL would write to the wrong place. */
+        if (url == NULL || url[0] == '\0') {
+            ssSetErrorStatus(S, "Nominal Stream Sink: API base URL is empty. Give the "
+                                "API URL of the Nominal instance the dataset is in.");
+            free(st);
+            goto cleanup;
+        }
         cfg.mode     = NM_MODE_DIRECT;
-        cfg.base_url = (url != NULL && url[0] != '\0')
-                     ? url : "https://api.gov.nominal.io/api";
+        cfg.base_url = url;
         cfg.token    = token;
     }
     cfg.capacity_rows = (size_t)mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
