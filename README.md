@@ -1,72 +1,89 @@
 # nominal-simulink
 
-Streams signals from a running Simulink model into Nominal, on the desktop and on
-Speedgoat real-time targets — QNX Neutrino for R2021a–R2025b, the Linux-based Antelope
-RTOS for R2026a and later.
+A Simulink block that streams signals from a running model into a Nominal dataset, and the
+relay it can stream through.
 
-**[USING.md](USING.md) is the guide**: installing the blockset, configuring the block,
-and running the proxy.
-
-The block ships as a MATLAB toolbox, `NominalBlockset-<version>.mltbx`, for R2021b and
-later. Installing it puts the block in the Library Browser and its documentation in the
-Help browser.
+The user docs are in [docs/](docs/): installing the blockset, a quickstart, and every
+parameter and message. `just serve-docs` serves them on http://127.0.0.1:8000. The block's
+in-toolbox help is generated from `simulink/doc-src/`.
 
 ## What is here
 
 ```
-cstream/            the C streaming library — standalone, no Simulink dependency
-simulink/blockset/  the blockset exactly as it ships: library, callbacks, MEX, docs
-simulink/tools/     the scripts that generate the library, example, docs and toolbox
-simulink/src/       the S-function
-nmproxy/            the Go relay daemon, for hosts with no headroom to spare
-tools/              captures the golden protocol fixtures from the Rust client
+cstream/            the C streaming library the block is built on, with no Simulink dependency
+simulink/blockset/  the toolbox's contents as they ship: library, mask callbacks, S-function, help
+simulink/doc-src/   the source of the in-toolbox help
+simulink/src/       the S-function's source
+simulink/tools/     scripts that generate the library, the example, the help and the toolbox
+simulink/tests/     the block's tests
+nmproxy/            the relay that proxy mode sends to, in Go
+matlab/             a readable MATLAB decoder for the relay protocol, and a relay that only prints
+docs/               the user docs
+tools/              captures direct mode's protobuf fixtures from the nominal-streaming Rust crate
+cmake/              the toolchain file for cross-compiling to QNX
 ```
 
-## Two ways to send
+## How it sends
 
-**Direct** — the model's machine talks HTTPS to Nominal itself. Nothing else to deploy.
+The block's **Mode** parameter chooses the path. In direct mode, the computer running the
+model sends to Nominal over HTTPS, with an API key from the `NOMINAL_TOKEN` environment
+variable. In proxy mode, the block sends UDP packets to `nmproxy`, which holds the API key and
+writes to Nominal, so the computer running the model needs no key and does no HTTPS work.
 
-**Proxy** — the model sends compact UDP datagrams to a relay, which does the protobuf,
-TLS and HTTP. For hosts already at their performance limit, and for those that should
-hold no credential: in proxy mode the dataset identifier travels in the frames and the
-token lives only on the relay.
+## Design
 
-Both are the same block, selected by a dropdown, so moving from one to the other is a
-configuration change rather than rewiring a model.
+**A model step never waits for the network.** Each step copies one row into a buffer reserved
+when the model started, so it neither allocates memory nor blocks. A background thread does the
+encoding, TLS and HTTP. When the run ends, the block spends up to 15 seconds sending what is
+left in the buffer.
+
+**Dropped rows are counted.** When sending can't keep up, the block drops rows rather than stall
+a model that may be driving hardware. It warns at the end of a run that dropped any, and can
+report a running count on an output port.
+
+**The relay protocol has three implementations.** It is specified in `cstream/src/nm_frame.h`
+and implemented in C, Go and MATLAB, all tested against the same fixtures. The format is meant
+for others to implement from that specification, and independent implementations are how we
+find out whether the specification is enough.
 
 ## Why C
 
-The Simulink block must survive code generation to a Speedgoat target, and the obvious
-approach — reusing the existing Rust client — required feature and version changes across
-four upstream crates plus a tier-3 Rust toolchain before anything would compile for QNX.
-The thing being talked to is one ordinary HTTPS POST, and QNX ships OpenSSL and has
-official curl builds. Implementing the write path in C removed all of it.
-
-## Design notes worth knowing
-
-**The step function does almost nothing.** All memory is reserved when the model starts,
-so pushing a sample never allocates and never blocks. Encoding, TLS and HTTP happen on a
-background thread.
-
-**Loss is bounded and visible.** If the network cannot keep up, samples are discarded and
-counted rather than stalling a model that may be driving hardware. The block warns at the
-end of a run if anything was lost, and can expose a live count on an output port.
-
-**The protocol is written twice on purpose.** The frame format between host and relay is
-implemented independently in C and in Go, pinned to shared golden fixtures. A format
-meant for third parties to implement has to be followable from its specification, and
-writing it twice is how we find out whether it is.
+Reusing Nominal's Rust client would have taken feature and version changes in four upstream
+crates, and a tier-3 Rust target, before it compiled for QNX, the operating system of Speedgoat
+real-time targets up to R2025b. The block needs only one HTTPS POST, and QNX ships OpenSSL and
+has official curl builds, so the write path is in C.
 
 ## Building and testing
 
+You need CMake, vcpkg with `curl:x64-windows-static-md`, just, and two MATLAB releases with
+Simulink and a C compiler set up (`mex -setup C`). The oldest release the blockset supports,
+R2021b, builds everything that ships, because a library opens only in the release that saved it
+or a later one. R2026a builds the toolbox. If either isn't in its default folder, set
+`MATLAB_OLDEST` or `MATLABROOT` to its install folder, with forward slashes. `nmproxy` needs
+Go 1.25, `just fixtures` needs Rust, and the docs need uv.
+
 ```powershell
-just build         # library, block, demo
-just library       # regenerate the Simulink block library
-just package       # build the toolbox: build/NominalBlockset-<version>.mltbx
-just test          # C tests: encoder, ring buffer, frame codec
-just sim-test      # block tests, on the oldest and newest supported releases
-just install-test  # install the toolbox into a clean session and run the block from it
+just build         # the C library, the S-function and the demo
+just test          # the C library's tests
+just sim-test      # the block's tests, in both MATLAB releases
+just package       # everything that ships, then build/NominalBlockset-<version>.mltbx
+just install-test  # installs that toolbox in a clean session and runs the block from it
+just build-docs    # the user docs, into docs/_build/dirhtml
 ```
 
-None of the tests need a token or network access. See [USING.md](USING.md) for the
-prerequisites and for streaming to a real dataset.
+`just --list` shows the rest. None of the tests need an API key or network access.
+
+Everything generated goes into `simulink/blockset/`, which is exactly what the toolbox contains.
+The library, the example model and the help pages are generated rather than committed, so the
+block's definition stays in source that a diff can review. To use the blockset from a clone
+without installing it, run `simulink/nominal_setup.m`.
+
+`simulink/VERSION` sets the version. `.github/workflows/blockset.yml` builds the Linux
+S-function, tests the installed toolbox on both platforms and both releases, and attaches the
+toolbox to a GitHub release for each `v*` tag.
+
+## Debugging the block
+
+Configure CMake with `-DNM_SFUN_TRACE=ON` and the S-function logs each callback as it enters,
+which narrows a crash or hang to one callback. `just demo <dataset RID>` streams synthetic rows
+to a dataset without Simulink, using the API key in `NOMINAL_TOKEN`.
