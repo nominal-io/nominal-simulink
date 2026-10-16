@@ -1,7 +1,11 @@
 cmake_minimum_required(VERSION 3.16)
 
+# Read rather than repeated: simulink/VERSION also versions the toolbox and the block
+# library, and two copies would drift.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/simulink/VERSION" NM_VERSION LIMIT_COUNT 1)
+
 project(nominal-simulink
-        VERSION 0.1.0
+        VERSION ${NM_VERSION}
         DESCRIPTION "Nominal streaming client for Simulink and real-time targets"
         LANGUAGES C)
 
