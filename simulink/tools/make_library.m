@@ -20,18 +20,17 @@ function make_library()
     version  = blocksetVersion();
 
     % The S-function must be resolvable, or Simulink cannot run mdlInitializeSizes and
-    % the block keeps the default one-in-one-out shape — which then gets saved, so every
-    % block dragged out shows an output port its checkbox says it does not have.
+    % the block keeps the wrong ports (see the port check before saving).
     addpath(fullfile(blockset, 'library'), fullfile(blockset, 'script'), ...
             fullfile(blockset, 'mex'));
     if isempty(which('nominal_sink_sfun'))
         error('nominal:library', ...
-              ['nominal_sink_sfun is not on the path. Build it first (`just build`); ' ...
-               'without it the block cannot size its ports.']);
+              ['nominal_sink_sfun was not found in %s, so the block cannot size its ' ...
+               'ports. Build it with `just build`.'], fullfile(blockset, 'mex'));
     end
 
-    % Start from scratch: leaving an old copy loaded is the usual reason a mask edit
-    % appears not to take.
+    % Start from scratch, because an old copy left loaded makes a mask edit appear not
+    % to take.
     if bdIsLoaded(libName)
         close_system(libName, 0);
     end
@@ -49,8 +48,8 @@ function make_library()
 
     % --- library metadata -------------------------------------------------------
     %
-    % The Library Browser lists a library only if this is on when it is saved. slblocks.m
-    % beside the .slx is the other half.
+    % The Library Browser lists a library only if EnableLBRepository is on when it is
+    % saved. slblocks.m beside the .slx is the other half.
     set_param(libName, 'EnableLBRepository', 'on');
 
     % Pinned rather than left to auto-increment. The library is rebuilt from nothing on
@@ -78,9 +77,8 @@ function make_library()
     % match, or if the names do not resolve. So give it real values now, and swap in the
     % variable names once the mask is built.
     %
-    % Getting this wrong is not loud: the block simply keeps the default S-Function
-    % shape of one input and one output, that shape is saved, and every block dragged
-    % out shows an output port its own checkbox says it does not have.
+    % Getting this wrong is not loud: the block keeps the wrong ports (see the port check
+    % before saving).
     set_param(blockPath, ...
         'FunctionName', 'nominal_sink_sfun', ...
         'Parameters', [ ...
@@ -112,22 +110,21 @@ function make_library()
     m.Help = ['eval(''' strrep([pathFixPrefix() 'nominal_help(gcb);'], '''', '''''') ''')'];
 
     m.Description = [ ...
-        'Streams the input vector to a Nominal dataset while the model runs.' newline newline ...
-        'One element per channel, in the order the channel names are listed. ' ...
-        'Writing happens on a background thread, so no network or TLS work occurs ' ...
-        'in the model step, and no memory is allocated there either.' newline newline ...
-        'If the network cannot keep up, rows are discarded and counted rather than ' ...
-        'stalling the model — the output port reports the running total.' newline newline ...
-        'The access token is read from the NOMINAL_TOKEN environment variable and is ' ...
-        'deliberately not a parameter, so it is never saved into the model.'];
+        'Streams the input vector to a Nominal dataset while the model runs. ' ...
+        'Each element is one channel, in the order of Channel names.' newline newline ...
+        'If sending falls behind, the block drops rows rather than slowing the model, ' ...
+        'and warns at the end of the run with how many.' newline newline ...
+        'In direct mode the block reads your API key from the NOMINAL_TOKEN ' ...
+        'environment variable, so the key is never saved in the model.'];
 
     m.addParameter('Type', 'edit', 'Name', 'channels', ...
         'Prompt', 'Channel names (comma-separated)', ...
         'Value', '''engine.rpm, engine.egt, engine.psi''');
 
-    % Typing the names by hand is tedious and quietly error-prone: the list sets the
-    % input port width, so one name too many or too few misaligns every column after
-    % it. This reads them off whatever is wired in.
+    % Typing the names by hand is tedious and error-prone. The names must match the wired
+    % signals in number and order. A count mismatch fails to compile, but a name in the
+    % wrong position silently mislabels every column after it. This button reads the
+    % names off whatever is wired in.
     %
     % A dialog control rather than a parameter — a button holds no value, and
     % addParameter rejects the type.
@@ -232,16 +229,19 @@ function make_library()
 
     % Assert the block matches its own dialog before saving it.
     %
-    % This failure mode is silent and cost several rounds to find: the block keeps the
-    % default S-Function shape whenever mdlInitializeSizes cannot run, that shape is
-    % saved, and the only symptom is a model refusing to run with an error pointing at
-    % the block rather than at the library that produced it.
+    % This failure mode is silent. Whenever mdlInitializeSizes cannot run, the block
+    % keeps the default S-Function shape of one input and one output, that shape is
+    % saved, and every block dragged out shows an output port its own checkbox says it
+    % does not have. The only symptom is a model refusing to run, with an error pointing
+    % at the block rather than at the library that produced it.
     ports = get_param(blockPath, 'Ports');
     if numel(ports) < 2 || ports(2) ~= 0
         error('nominal:library', ...
-              ['the block reports %d output(s) with showDropped off, so its ports did ' ...
-               'not track its parameters. Blocks dragged from this library would not ' ...
-               'run.'], ports(2));
+              ['with showDropped off, the block''s Ports are %s, where the output count ' ...
+               'should be 0. Its ports did not track its parameters, so blocks dragged ' ...
+               'from this library would not run. Rebuild the S-function with `just ' ...
+               'build`, and check that the Parameters string in make_library matches ' ...
+               'the parameters nominal_sink_sfun.c reads.'], mat2str(ports));
     end
 
     % Quick Insert: typing any of these on the canvas offers the block.

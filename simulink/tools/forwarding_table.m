@@ -2,9 +2,9 @@ function table = forwarding_table()
 %FORWARDING_TABLE  How nominal_lib's past blocks map onto its current ones.
 %
 %   Users' models store a link to 'nominal_lib/<block name>'. Rename a block, move it to
-%   a sublibrary, or change its parameters, and every saved model holding the old one
-%   breaks — unless the library carries a forwarding table entry, which Simulink applies
-%   as it opens the model. make_library writes this into the library.
+%   a sublibrary, or rename or remove a parameter, and every saved model holding the old
+%   one breaks, unless the library carries a forwarding table entry, which Simulink
+%   applies as it opens the model. make_library writes this table into the library.
 %
 %   Empty until the first such change ships. Each entry is one of:
 %

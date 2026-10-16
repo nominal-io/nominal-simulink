@@ -93,9 +93,9 @@ classdef AutonamesTest < BlocksetTestCase
 
         function aModelRunsOffThePath(tc)
             % The failure this reproduces — "S-Function 'nominal_sink_sfun' does not
-            % exist" — appears only when the model is *run*, so fixing the mask
-            % callbacks did not catch it. A dragged-in block resolves its dialog fine
-            % and then fails at compile.
+            % exist" — appears only when the model is *run*, so
+            % theMaskCallbackWorksOffThePath does not catch it. A dragged-in block
+            % resolves its dialog fine and then fails at compile.
             [model, blk] = AutonamesTest.buildMux('nm_names_runoff', true);
             set_param(blk, 'channels', '''alpha, beta, gamma''', ...
                            'datasetRid', '''ri.catalog.test.dataset.0''', ...

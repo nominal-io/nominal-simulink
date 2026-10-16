@@ -1,24 +1,24 @@
 classdef SinkBlockTest < BlocksetTestCase
 %SINKBLOCKTEST  Offline checks on the sink block. No token, no network.
 %
-%   Verifies the MEX loads, the port sizing follows the channel list, and that a model
-%   containing the block actually steps, in both transports and simulation modes. Run
-%   via `just sim-test`.
+%   Verifies the MEX is on the path, the port sizing follows the channel list, and that a
+%   model containing the block actually steps, in both transports and simulation modes.
+%   Run via `just sim-test`.
 %
-%   The one thing it cannot check is that data lands in Nominal — that needs a token,
-%   and cstream's nmstream-demo already covers the write path end to end.
+%   It cannot check that data lands in Nominal, which needs a token and a real dataset.
+%   `just demo <rid>` exercises the write path end to end.
 
     methods (Test)
         function sfunctionIsOnThePath(tc)
-            % A statically linked MEX still fails to load if a dependency is missing,
-            % and the error is unhelpful, so check this first and separately.
+            % Finds the MEX on the path, so a missing build fails here by name rather
+            % than inside a model.
             tc.verifyNotEmpty(which('nominal_sink_sfun'));
         end
 
         function inputWidthFollowsTheChannelList(tc)
-            % Worth asserting: the port width is derived from the channel list inside
-            % mdlInitializeSizes, and if the two ever disagree, nm_push would read past
-            % the end of the input signal.
+            % The port width is derived from the channel list inside mdlInitializeSizes,
+            % and if the two ever disagree, nm_push would read past the end of the input
+            % signal.
             %
             % No output is expected either. Simulink treats an unconnected output port
             % as a block error, so a sink that always exposed one would force every user
@@ -60,10 +60,10 @@ classdef SinkBlockTest < BlocksetTestCase
         end
 
         function proxyModeNeedsNoTokenAndNoRelay(tc)
-            % Pointed at a closed port, so nothing receives the datagrams. Proxy mode
-            % must not need a token, since the whole point is that the token stays on
-            % the relay; must not need a reachable relay to start; and must not stall
-            % the model when the relay is absent.
+            % Proxy mode must start without a token, because the token stays on the
+            % relay. It must also start without a reachable relay, and must not stall
+            % the model when none is listening. The port here is closed, so nothing
+            % receives the datagrams.
             BlocksetTestCase.setToken(tc, '');
             model = SinkBlockTest.proxyModel('nm_sink_proxy');
             sim(model);
@@ -72,7 +72,8 @@ classdef SinkBlockTest < BlocksetTestCase
         function doubleQuotedTextWorks(~)
             % "..." is a string, which a C S-function cannot read as text. It used to
             % arrive as empty: a misleading "channel list is empty", and for the URL a
-            % silent fall back to the default instance.
+            % silent fallback to the default instance. This test covers the channel
+            % list, dataset RID and proxy host, in proxy mode.
             model = BlocksetTestCase.sinkModel('nm_sink_dquote', ...
                 'channels',   '"smoke.a, smoke.b, smoke.c"', ...
                 'datasetRid', '"ri.catalog.test.dataset.0"', ...
@@ -83,12 +84,12 @@ classdef SinkBlockTest < BlocksetTestCase
             sim(model);
         end
 
-        function aNonTextUrlIsAnErrorNotTheDefault(tc)
+        function aNonTextUrlIsAnError(tc)
             [model, blk] = SinkBlockTest.directModel('nm_sink_badurl');
             set_param(blk, 'baseUrl', '42');
             try
                 sim(model);
-                tc.verifyFail('a numeric API base URL ran, so it fell back to a default');
+                tc.verifyFail('a numeric API base URL was accepted. The block should reject it as not text.');
             catch err
                 tc.verifySubstring(allMessages(err), 'API base URL must be text');
             end
@@ -96,8 +97,8 @@ classdef SinkBlockTest < BlocksetTestCase
 
         function runsInAcceleratorMode(tc)
             % Accelerator mode compiles the model into a MEX of its own, which calls back
-            % into the S-function. Users reach for it on long runs, and it needs no
-            % Simulink Coder licence, so it should simply work.
+            % into the S-function. It needs no Simulink Coder licence, so any user can
+            % choose it for a long run, and it should simply work.
             tc.applyFixture(matlab.unittest.fixtures.WorkingFolderFixture);
             model = SinkBlockTest.proxyModel('nm_sink_accel');
             set_param(model, 'SimulationMode', 'accelerator');

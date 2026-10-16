@@ -1,23 +1,24 @@
 /*
  * nominal_sink_sfun.c — a Simulink sink block that streams signals to Nominal.
  *
- * The model's step function is not a place to do network I/O, so this block does
- * almost nothing: it copies one row into libnominalstream's ring and returns. Encoding,
- * TLS and HTTP all happen on that library's sender thread. nm_push neither allocates
- * nor blocks, so the cost per step is bounded and independent of the network — which is
- * what makes the block safe on a real-time target rather than only on the desktop.
+ * The model's step function is not a place to do network I/O, so in each step this block
+ * only copies one row into libnominalstream's ring and returns. Encoding and all network
+ * I/O, whether HTTPS or datagrams to a relay, happen on that library's sender thread.
+ * nm_push neither allocates nor blocks, so the cost per step is bounded and independent
+ * of the network, which is what makes the block safe on a real-time target rather than
+ * only on the desktop.
  *
  * Under saturation the library discards rows and counts them. That is the right trade
  * for hardware-in-the-loop: stalling a model driving real hardware is far worse than
- * losing telemetry. The discarded count is an output port so the loss is visible in the
- * model instead of silent.
+ * losing telemetry. The discarded count is available on an optional output port, and
+ * mdlTerminate warns at the end of a run if rows were lost, so loss is never silent.
  *
  * Signals arrive as a flat vector with channel names given as a parameter, rather than
  * as a bus. Introspecting bus element names from inside a C S-function is both fiddly
  * and version-sensitive, and it is exactly the sort of thing that fails to survive code
  * generation — which this block must do, since Speedgoat targets are code-generated.
- * The bus ergonomics belong in a mask callback that fills in the names at edit time,
- * where MATLAB can inspect the bus properly.
+ * Instead, nominal_sink_autonames, behind the mask's Detect button, fills in the names
+ * at edit time, where MATLAB can inspect the bus properly.
  *
  * The token is read from the NOMINAL_TOKEN environment variable and is deliberately not
  * a block parameter: parameters are saved inside the .slx, and a credential committed
@@ -35,20 +36,19 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Build with -DNM_SFUN_TRACE=1 to log callback entry and exit. A fault inside an
+/* Configure with -DNM_SFUN_TRACE=ON to log entry to each callback. A fault inside an
  * S-function surfaces as a bare access violation that takes MATLAB down with it, with
- * no indication of which callback was running, so having this switchable is worth the
- * few lines. */
+ * no indication of which callback was running. */
 #if defined(NM_SFUN_TRACE) && NM_SFUN_TRACE
-/* mexPrintf only. Calling mexEvalString here would re-enter the MATLAB interpreter from
- * inside a callback declared SS_OPTION_EXCEPTION_FREE_CODE, which is exactly what that
- * option promises not to do. */
+/* mexPrintf only. mexEvalString would re-enter the MATLAB interpreter from inside a
+ * Simulink callback. */
 #define NM_TRACE(...) mexPrintf("[nm] " __VA_ARGS__)
 #else
 #define NM_TRACE(...) ((void)0)
 #endif
 
-/* Block parameters, in mask order. */
+/* Block parameters, in the order of the Parameters string that make_library sets.
+ * Keep the two in step. The dialog lists the fields in a different order. */
 enum {
     P_CHANNELS = 0,   /* comma-separated channel names */
     P_DATASET,        /* dataset RID */
@@ -63,13 +63,16 @@ enum {
     P_COUNT
 };
 
-/* One-based, matching the mask popup's evaluated option index. */
-enum { MODE_DIRECT = 1, MODE_PROXY = 2 };
-
 /* One-based to match a Simulink mask popup, whose evaluated value is the option
  * index. Keeping the C side aligned with the mask avoids an off-by-one that would
- * silently pick the wrong clock. */
+ * silently pick the wrong transport or clock. */
+enum { MODE_DIRECT = 1, MODE_PROXY = 2 };
 enum { TIME_MODE_SIM = 1, TIME_MODE_WALL = 2 };
+
+/* Used both when sizing the ports and when opening the stream. */
+#define MSG_NO_CHANNELS "Nominal Stream Sink: the channel list is empty. Enter channel " \
+                        "names in quotes, separated by commas, or click Detect from "   \
+                        "connected signal."
 
 /* Per-block state. Kept in PWork because the epoch is an int64 nanosecond count and
  * RWork would store it as a double -- which holds integers exactly only to 2^53, about
@@ -129,9 +132,9 @@ static char *param_string(SimStruct *S, int index)
 }
 
 /*
- * Split "a, b, c" into a NULL-terminated array of trimmed names, sharing one buffer.
- * Returns the count, or 0 on failure. *storage must be freed by the caller; *names is
- * an array that must be freed separately.
+ * Split "a, b, c" into an array of trimmed names, sharing one buffer. Returns the
+ * count, or 0 if there are no names or allocation fails. The caller frees *storage and
+ * *names separately.
  */
 static size_t split_names(const char *csv, char **storage, char ***names)
 {
@@ -240,8 +243,7 @@ static void mdlInitializeSizes(SimStruct *S)
     free(storage);
 
     if (count == 0) {
-        ssSetErrorStatus(S, "Nominal Stream Sink: the channel list is empty. "
-                            "Give a comma-separated list of channel names.");
+        ssSetErrorStatus(S, MSG_NO_CHANNELS);
         return;
     }
 
@@ -282,9 +284,10 @@ static void mdlInitializeSizes(SimStruct *S)
     ssSetNumPWork(S, 1);
     NM_TRACE("mdlInitializeSizes: work vectors declared\n");
 
-    /* No zero-crossings, and the block is safe to leave out of a model that does not
-     * need it. Exception-free code lets Simulink skip its own try/catch wrapper. */
-    /* Deliberately NOT SS_OPTION_EXCEPTION_FREE_CODE. That option promises the callbacks
+    /* SS_OPTION_CALL_TERMINATE_ON_EXIT makes Simulink call mdlTerminate even when
+     * mdlStart never ran, which is why mdlTerminate checks for PWork first.
+     *
+     * Deliberately NOT SS_OPTION_EXCEPTION_FREE_CODE. That option promises the callbacks
      * never invoke anything that can raise a MATLAB exception, and this file calls
      * mxGetString and (when tracing) mexPrintf, which can. The promise buys a little
      * speed and costs Simulink's protective wrapper, so breaking it turns any fault
@@ -332,9 +335,10 @@ static void mdlStart(SimStruct *S)
      * stealing — demanding one here would be asking for a secret we will not use. */
     token = getenv("NOMINAL_TOKEN");
     if (mode != MODE_PROXY && (token == NULL || token[0] == '\0')) {
-        ssSetErrorStatus(S, "Nominal Stream Sink: NOMINAL_TOKEN is not set. "
-                            "The token is read from the environment rather than stored "
-                            "in the model. (Proxy mode does not need one.)");
+        ssSetErrorStatus(S, "Nominal Stream Sink: NOMINAL_TOKEN is not set. Set it to "
+                            "your Nominal API key, for example with "
+                            "setenv('NOMINAL_TOKEN', '<API key>'), then run the model "
+                            "again.");
         return;
     }
 
@@ -353,9 +357,13 @@ static void mdlStart(SimStruct *S)
     proxy_host = param_string(S, P_PROXY_HOST);
     count      = split_names(csv, &storage, &names);
 
-    if (count == 0 || rid == NULL || rid[0] == '\0') {
-        ssSetErrorStatus(S, "Nominal Stream Sink: a dataset RID and at least one "
-                            "channel name are required.");
+    if (count == 0) {
+        ssSetErrorStatus(S, MSG_NO_CHANNELS);
+        goto cleanup;
+    }
+    if (rid == NULL || rid[0] == '\0') {
+        ssSetErrorStatus(S, "Nominal Stream Sink: Dataset RID is empty. Enter the RID of "
+                            "the dataset to write to, in quotes.");
         goto cleanup;
     }
 
@@ -381,8 +389,8 @@ static void mdlStart(SimStruct *S)
 
         if (proxy_host == NULL || proxy_host[0] == '\0' ||
             port < 1.0 || port > 65535.0) {
-            ssSetErrorStatus(S, "Nominal Stream Sink: proxy mode needs a host and a "
-                                "port between 1 and 65535.");
+            ssSetErrorStatus(S, "Nominal Stream Sink: in proxy mode, Proxy host can't be "
+                                "empty and Proxy port must be from 1 to 65535.");
             free(st);
             goto cleanup;
         }
@@ -393,7 +401,7 @@ static void mdlStart(SimStruct *S)
         /* No default to fall back on: a blank URL is a mistake, and quietly
          * substituting one instance's URL would write to the wrong place. */
         if (url == NULL || url[0] == '\0') {
-            ssSetErrorStatus(S, "Nominal Stream Sink: API base URL is empty. Give the "
+            ssSetErrorStatus(S, "Nominal Stream Sink: API base URL is empty. Enter the "
                                 "API URL of the Nominal instance the dataset is in.");
             free(st);
             goto cleanup;
@@ -405,7 +413,8 @@ static void mdlStart(SimStruct *S)
     cfg.capacity_rows = (size_t)mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
     cfg.max_batch_delay_ms = 100;
     /* An RTOS has no OS trust store, so a target needs an explicit bundle. On the
-     * desktop NULL uses the platform's own, which is what Windows Schannel provides. */
+     * desktop, NULL leaves libcurl to use its default trust store (the Windows
+     * certificate store, through Schannel, on Windows). */
     cfg.ca_bundle_path = getenv("NOMINAL_CA_BUNDLE");
     if (cfg.ca_bundle_path != NULL && cfg.ca_bundle_path[0] == '\0') {
         cfg.ca_bundle_path = NULL;
@@ -417,9 +426,20 @@ static void mdlStart(SimStruct *S)
     /* nm_open copies the channel names, so their storage can be released below. */
     st->stream = nm_open(&cfg, &status);
     if (st->stream == NULL) {
-        static char msg[256];
-        snprintf(msg, sizeof msg, "Nominal Stream Sink: could not open the stream (%s).",
-                 nm_strerror(status));
+        static char msg[384];
+        if (status == NM_ERR_TOO_LARGE) {
+            snprintf(msg, sizeof msg,
+                     "Nominal Stream Sink: in proxy mode, the dataset RID and channel names "
+                     "have to fit in one 1400-byte packet to the relay, and these don't. "
+                     "Use fewer or shorter channel names.");
+        } else if (mode == MODE_PROXY && status == NM_ERR_TRANSPORT) {
+            snprintf(msg, sizeof msg,
+                     "Nominal Stream Sink: could not set up sending to Proxy host '%s'. "
+                     "Check that the name or address is right.", proxy_host);
+        } else {
+            snprintf(msg, sizeof msg, "Nominal Stream Sink: could not open the stream (%s).",
+                     nm_strerror(status));
+        }
         ssSetErrorStatus(S, msg);
         free(st);
         goto cleanup;
@@ -504,13 +524,14 @@ static void mdlTerminate(SimStruct *S)
         return;
     }
 
-    /* Blocks until buffered rows have been sent or have definitively failed, so the
-     * data has landed before the simulation is considered over. A deadlock here would
-     * hang MATLAB silently, which is why the library's sender thread takes no lock the
-     * producer can hold. */
     /*
+     * nm_close_stats blocks until buffered rows are sent or have definitively failed, or
+     * until the 15 s allowed at close runs out, so nothing is in flight when the run ends.
+     * A deadlock here would hang MATLAB silently,
+     * which is why the library's sender thread takes no lock the producer can hold.
+     *
      * nm_close_stats rather than nm_close, because the counts worth reporting are the
-     * ones after the final flush — and nm_close frees the stream, so there is no later
+     * ones after the final flush, and nm_close frees the stream, so there is no later
      * moment at which to read them.
      */
     nm_stats_t stats;
@@ -521,9 +542,9 @@ static void mdlTerminate(SimStruct *S)
      * now that the output port is off by default: a run that dropped rows says so,
      * whether or not anyone wired up the diagnostic.
      *
-     * The total is every row the model produced, not only those that found room in the
-     * buffer. Rows discarded for want of room are part of the loss, so dividing by the
-     * accepted count could report more lost than written.
+     * The "of" total is rows_pushed, every row the model produced, including rows the
+     * full buffer refused. Using rows_accepted instead could report more rows lost than
+     * written.
      */
     if (stats.rows_dropped > 0 || stats.requests_failed > 0) {
         static char warn[512];
@@ -537,7 +558,7 @@ static void mdlTerminate(SimStruct *S)
             snprintf(why, sizeof why,
                      "the buffer filled faster than the network drained it");
         } else if (st->mode == MODE_PROXY) {
-            snprintf(why, sizeof why, "%llu datagrams could not be sent to the relay",
+            snprintf(why, sizeof why, "%llu packets could not be sent to the relay",
                      (unsigned long long)stats.requests_failed);
         } else if (stats.last_http_status > 0) {
             snprintf(why, sizeof why, "%llu requests failed, the last with HTTP status %ld",

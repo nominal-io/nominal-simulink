@@ -7,18 +7,19 @@ function names = nominal_sink_autonames(blk, apply)
 %   NOMINAL_SINK_AUTONAMES(blk, true) also writes them into the block's `channels`
 %   parameter. This is what the "Detect from connected signal" button does.
 %
-%   Typing channel names by hand is both tedious and a silent source of error: the list
-%   sets the input port width, so a name added without a matching signal — or a signal
-%   added without a name — misaligns every column after it. Reading them off the model
-%   removes both problems.
+%   Typing channel names by hand is tedious and error-prone. The names must match the
+%   wired signals in number and order. A count mismatch fails to compile, but a name in
+%   the wrong position silently mislabels every column after it. Reading the names off
+%   the model avoids both.
 %
-%   Handles the shapes people actually build:
+%   Handles these sources:
 %
 %     Bus Creator   element names, which is the case worth optimising for — adding a
 %                   signal to the bus then means editing the bus, not the block.
 %     Mux           the name of each incoming line, or its source block if the line is
 %                   unnamed.
-%     Bus Selector  the selected signal names.
+%     Bus Selector  the selected signal names, or with "Output as virtual bus" off, the
+%                   one signal on the wired port.
 %     anything else the line's own name, or the source block's name.
 %
 %   Deliberately does not compile the model. A button in a dialog should respond
@@ -31,7 +32,7 @@ function names = nominal_sink_autonames(blk, apply)
 %   then report a width mismatch, which is a clear error rather than silent
 %   misalignment, and the fix is to name the elements or use a Mux.
 %
-%   See also NOMINAL_SINK_MODECB
+%   See also NOMINAL_SINK_DETECT
 
     if nargin < 2
         apply = false;
@@ -39,21 +40,25 @@ function names = nominal_sink_autonames(blk, apply)
 
     ph = get_param(blk, 'PortHandles');
     if isempty(ph.Inport)
-        error('nominal:autonames', 'the block has no input port');
+        error('nominal:autonames', ...
+              ['The block has no input port. Check that Channel names ' ...
+               '(comma-separated) holds at least one name.']);
     end
 
     line = get_param(ph.Inport(1), 'Line');
     if line <= 0
         error('nominal:autonames', ...
-              ['nothing is connected to the block''s input. Wire up the signals ' ...
-               'first, then detect.']);
+              ['Nothing is connected to the block''s input. Wire up the signals ' ...
+               'first, then click Detect from connected signal.']);
     end
 
     names = namesFromLine(line, 0);
 
     if isempty(names)
         error('nominal:autonames', ...
-              'could not work out any channel names from the connected signal');
+              ['Could not work out any channel names from the connected signal. ' ...
+               'Name the signal lines, or type the channel names into Channel names ' ...
+               '(comma-separated).']);
     end
 
     names = makeUnique(names);
@@ -81,8 +86,6 @@ function names = namesFromLine(line, depth)
 
     switch get_param(srcBlk, 'BlockType')
         case 'BusCreator'
-            % The case worth optimising for: names are declared on the bus, so adding a
-            % signal later means editing the bus rather than the block.
             names = cellstr(get_param(srcBlk, 'InputSignalNames'));
             names = names(:).';
 

@@ -16,8 +16,8 @@ classdef LibraryMetadataTest < BlocksetTestCase
             % Both halves: slblocks names the library, and the library was saved with
             % the repository flag on. Either missing and the Browser shows nothing.
             %
-            % Ours, not whichever slblocks is first on the path: the current folder
-            % takes precedence over the path.
+            % Run from library/ so `slblocks` resolves to ours, because the current
+            % folder takes precedence over the path.
             tc.applyFixture(matlab.unittest.fixtures.CurrentFolderFixture( ...
                 BlocksetTestCase.folder('library')));
             s = slblocks;
@@ -51,7 +51,7 @@ classdef LibraryMetadataTest < BlocksetTestCase
             % need, so only follow the link through when the docs exist.
             tc.assumeTrue(isfile(fullfile(BlocksetTestCase.folder('doc'), 'html', ...
                                           'nominal_blockset.html')), ...
-                          'docs not built');
+                          'docs not built. Run `just docs` to include this check.');
             tc.verifyEqual(nominal_help(blk), ...
                 fullfile(BlocksetTestCase.folder('doc'), 'html', 'nominal_stream_sink.html'));
         end

@@ -27,7 +27,9 @@ function file = nominal_help(blk)
     path = fullfile(nominal_root(), 'doc', 'html', page);
     if ~isfile(path)
         error('nominal:help', ...
-              '%s is missing. The documentation is generated; run `just docs`.', path);
+              ['%s is missing. In a clone, generate the documentation with ' ...
+               '`just docs`. In an installed toolbox, reinstall the Nominal Blockset.'], ...
+              path);
     end
 
     if nargout > 0

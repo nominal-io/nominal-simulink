@@ -32,8 +32,8 @@ matlab_add_mex(
 target_include_directories(nominal_sink_sfun PRIVATE "${NM_SIMULINK_INCLUDE}")
 
 # A fault inside an S-function is reported as a bare access violation that takes MATLAB
-# with it, naming no callback. -DNM_SFUN_TRACE=ON logs each one on entry.
-option(NM_SFUN_TRACE "Log S-function callback entry and exit" OFF)
+# with it, naming no callback. -DNM_SFUN_TRACE=ON logs entry to each callback.
+option(NM_SFUN_TRACE "Log S-function callback entry" OFF)
 if(NM_SFUN_TRACE)
   target_compile_definitions(nominal_sink_sfun PRIVATE NM_SFUN_TRACE=1)
 endif()

@@ -4,7 +4,8 @@ function make_docs()
 %   Each page is a script of publish markup, so the source is plain text a diff can
 %   review. This publishes them into blockset/doc/html, writes the help browser's table
 %   of contents beside them, and builds a search index. blockset/doc/info.xml points the
-%   help browser at the result; it lists the pages under Supplemental Software.
+%   help browser at the result, and the help browser lists the pages under Supplemental
+%   Software.
 %
 %   Run it under both the oldest and the newest supported release, as `just docs` does.
 %   The search index format changed in R2022a, so each release builds the index it

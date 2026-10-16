@@ -26,7 +26,9 @@ classdef InstalledToolboxTest < matlab.unittest.TestCase
         function install(tc)
             tc.fatalAssertEmpty(which('nominal_sink_sfun'), ...
                 ['The blockset is already on the path, so this would test that copy ' ...
-                 'rather than the package. Run it in a fresh session.']);
+                 'rather than the package. Remove the blockset folders from the path ' ...
+                 '(nominal_setup(true) saves them) and run this test in a fresh ' ...
+                 'MATLAB session.']);
 
             installed = matlab.addons.installedAddons;
             tc.fatalAssertFalse(any(strcmp(installed.Identifier, tc.Identifier)), ...
@@ -64,8 +66,8 @@ classdef InstalledToolboxTest < matlab.unittest.TestCase
                 tc.verifyTrue(startsWith(which(f{1}), tc.InstallFolder), ...
                     sprintf('%s does not resolve into the installed blockset', f{1}));
             end
-            % Every library has an slblocks, and the Library Browser reads all of them,
-            % so ours only has to be among them rather than first.
+            % Each library in the Library Browser has its own slblocks, and the Browser
+            % reads all of them, so ours only has to be among them rather than first.
             tc.verifyTrue(any(startsWith(which('slblocks', '-all'), tc.InstallFolder)), ...
                 'the installed slblocks is not on the path');
         end
@@ -80,8 +82,8 @@ classdef InstalledToolboxTest < matlab.unittest.TestCase
             % Both halves: slblocks names the library, and the library was saved with
             % the repository flag on. Either missing and the Browser shows nothing.
             %
-            % Ours, not whichever slblocks is first on the path: the current folder
-            % takes precedence over the path.
+            % Run from library/ so `slblocks` resolves to ours, because the current
+            % folder takes precedence over the path.
             back = cd(fullfile(tc.InstallFolder, 'library'));
             restore = onCleanup(@() cd(back));
             s = slblocks;

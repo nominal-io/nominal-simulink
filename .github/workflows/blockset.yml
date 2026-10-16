@@ -1,5 +1,5 @@
-# Builds, tests and packages the Nominal Blockset, and attaches the .mltbx to a release
-# when a v* tag is pushed.
+# Builds, tests and packages the Nominal Blockset and the nmproxy relay, and attaches
+# both to a GitHub release when a v* tag is pushed.
 #
 # The shape follows the support range. The oldest supported release, R2021b, builds
 # everything that ships: a library opens only in the release that saved it or a later
@@ -44,7 +44,7 @@ jobs:
       - name: Install libcurl
         run: vcpkg install curl:x64-windows-static-md
 
-      - name: Build and run the C tests
+      - name: Build the library and MEX, and run the C tests
         run: |
           cmake -S . -B build `
             -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
@@ -71,12 +71,12 @@ jobs:
           products: Simulink
 
       # Built in Rocky Linux 8 rather than on the runner. A binary needs the glibc it
-      # was linked against or newer, so one built here would refuse to load on RHEL 8,
-      # which R2021b supports. MATLAB is only read, for its headers and libraries.
+      # was linked against or newer, so one built on the Ubuntu 22.04 runner would refuse
+      # to load on RHEL 8, which R2021b supports. MATLAB is only read, for its headers and libraries.
       #
       # libcurl is linked dynamically. Inside MATLAB that resolves to the libcurl MATLAB
       # ships, which is built against its own renamed OpenSSL, so nothing clashes.
-      - name: Build and run the C tests (Rocky Linux 8)
+      - name: Build the library and MEX, and run the C tests (Rocky Linux 8)
         env:
           MATLAB_ROOT: ${{ steps.matlab.outputs.matlabroot }}
         run: |
@@ -201,9 +201,9 @@ jobs:
         working-directory: nmproxy
         run: go vet ./... && go test ./...
 
-      # Each archive holds the binary and the example configuration it starts from. A
-      # build that is not from a tag says so in its version, so a binary from main is
-      # never mistaken for a release.
+      # Each archive holds the binary and nmproxy.example.yaml, the example configuration
+      # to start from. A build that is not from a tag says so in its version, so a binary
+      # from main is never mistaken for a release.
       - name: Build an archive per platform
         run: |
           version="$(tr -d '[:space:]' < simulink/VERSION)"

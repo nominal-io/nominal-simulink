@@ -4,17 +4,19 @@ function nominal_setup(save)
 %   NOMINAL_SETUP        add the blockset's folders for this session
 %   NOMINAL_SETUP(true)  add them and save, so they persist across restarts
 %
-%   Installing the toolbox (.mltbx) does this for you; this is for working on the
-%   blockset itself. It adds the folders that installation would: library/ (the block
-%   library and slblocks.m, which lists it in the Library Browser), script/ (the mask
-%   callbacks), mex/ (the compiled S-function) and doc/ (the documentation).
+%   Installing the toolbox (.mltbx) sets up the path itself. Use nominal_setup when
+%   working on the blockset from a clone. It adds the folders that installation would:
+%   library/ (the block library and slblocks.m, which lists it in the Library Browser),
+%   script/ (the mask callbacks), mex/ (the compiled S-function) and doc/ (the
+%   documentation).
 %
 %   The mask callbacks try to locate these folders themselves, so a block dragged from an
-%   open library usually works without running this. Use it when that fails — a model
-%   opened on a machine where the library was never opened, or one loaded by a script.
+%   open library works without running this. Use it when that fails, for example for a
+%   model opened in a MATLAB session where nominal_lib is not loaded, or a model loaded
+%   by a script.
 %
 %   Example:
-%       run('C:\sw\nominal-simulink\simulink\nominal_setup.m')
+%       run(fullfile('<clone>', 'simulink', 'nominal_setup.m'))
 
     if nargin < 1
         save = false;

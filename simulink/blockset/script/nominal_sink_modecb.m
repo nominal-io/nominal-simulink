@@ -1,10 +1,10 @@
 function nominal_sink_modecb(blk)
 %NOMINAL_SINK_MODECB  Enable only the fields the selected mode actually uses.
 %
-%   Mask callback for the Nominal Stream Sink's Mode popup. Direct mode reads the API
-%   base URL and a token from the environment; proxy mode reads a host and port and
-%   needs no credential at all. Leaving both sets enabled would imply a proxy host
-%   matters in direct mode, or that an API URL matters in proxy mode.
+%   Mask callback for the Nominal Stream Sink's Mode popup. Direct mode uses the API
+%   base URL, plus a token from the NOMINAL_TOKEN environment variable. Proxy mode uses
+%   a host and port and needs no credential. Leaving both sets enabled would imply a
+%   proxy host matters in direct mode, or that an API URL matters in proxy mode.
 %
 %   Works by parameter name rather than through the positional MaskEnables array, so
 %   adding or reordering a field cannot silently disable the wrong one.

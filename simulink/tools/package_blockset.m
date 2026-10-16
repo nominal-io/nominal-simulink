@@ -1,9 +1,9 @@
 function file = package_blockset()
 %PACKAGE_BLOCKSET  Build the blockset installer, build/NominalBlockset-<version>.mltbx.
 %
-%   Packages simulink/blockset as it stands. Everything in that folder ships, so build
-%   it first — `just package` runs the MEX build, the library, the example and the docs
-%   before this.
+%   Packages simulink/blockset as it stands. Everything in that folder ships, apart from
+%   the editor and cache files filtered out below, so build it first. `just package`
+%   runs the MEX build, the library, the example and the docs before this.
 %
 %   Needs R2023a or later for ToolboxOptions. The contents it packages are built by the
 %   oldest supported release, so the toolbox installs as far back as that release
@@ -58,10 +58,9 @@ function file = package_blockset()
     if isprop(opts, 'Description')
         opts.Description = [ ...
             'A Simulink block that streams its input to a Nominal dataset while the ' ...
-            'model runs, directly over HTTPS or through a relay. Writing happens on a ' ...
-            'background thread, so the model step does no network work and allocates ' ...
-            'nothing; under load, rows are dropped and counted rather than stalling ' ...
-            'the model.'];
+            'model runs, either directly over HTTPS or through a relay. If sending ' ...
+            'falls behind, the block drops rows rather than slowing the model, and ' ...
+            'reports how many.'];
     end
 
     % Editor backups and Simulink caches can land here while working on the blockset,
