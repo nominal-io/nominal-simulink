@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -50,7 +51,10 @@ func (s *Server) LocalAddr() net.Addr { return s.conn.LocalAddr() }
 // becomes the bottleneck, the fix is SO_REUSEPORT with a socket per worker, which
 // preserves per-flow ordering — not a shared queue.
 func (s *Server) Run(ctx context.Context) error {
-	buf := make([]byte, frame.MaxBytes)
+	// Room for any UDP datagram, not only the largest frame. Anyone who can reach the
+	// port can send anything, and on Windows a datagram larger than the buffer fails
+	// the read itself rather than arriving truncated.
+	buf := make([]byte, 64<<10)
 
 	go func() {
 		<-ctx.Done()
@@ -63,17 +67,37 @@ func (s *Server) Run(ctx context.Context) error {
 	}
 	go s.sweep(ctx)
 
+	// One unreadable datagram is no reason to stop serving every other sender. A socket
+	// that fails every read is, so a long enough run of failures still ends the relay.
+	const maxConsecutiveFailures = 100
+	failures := 0
+
 	for {
 		n, _, err := s.conn.ReadFromUDP(buf)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil // closed by the cancellation above
 			}
-			return fmt.Errorf("receive failed: %w", err)
+			if errors.Is(err, net.ErrClosed) {
+				return fmt.Errorf("receive failed: %w", err)
+			}
+			failures++
+			if failures >= maxConsecutiveFailures {
+				return fmt.Errorf("receive failed %d times in a row: %w", failures, err)
+			}
+			s.registry.countBadFrame()
+			if failures == 1 {
+				s.log.Warn("a datagram could not be read", "error", err)
+			}
+			continue
 		}
-		// A datagram that filled the buffer exactly is suspicious: the sender should
-		// never exceed MaxBytes, so this is either a different protocol or a truncated
-		// read. The decoder will reject it, but say so once.
+		failures = 0
+
+		// No sender of ours exceeds MaxBytes, so this is another protocol or rubbish.
+		if n > frame.MaxBytes {
+			s.registry.countBadFrame()
+			continue
+		}
 		s.registry.Handle(buf[:n], time.Now())
 	}
 }

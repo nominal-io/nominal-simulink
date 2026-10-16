@@ -252,6 +252,14 @@ func (r *Registry) handleData(buf []byte, now time.Time) {
 	}
 }
 
+// countBadFrame records a datagram that never reached the decoder, such as one too
+// large to be a frame.
+func (r *Registry) countBadFrame() {
+	r.mu.Lock()
+	r.badFrames++
+	r.mu.Unlock()
+}
+
 // countWriteError records a write that failed after Push returned. The writer logs the
 // error itself; this only has to make it visible in the stats.
 func (r *Registry) countWriteError(error) {
