@@ -100,8 +100,15 @@ function names = namesFromLine(line, depth)
             end
 
         case 'BusSelector'
-            sel = get_param(srcBlk, 'OutputSignals');
-            names = strtrim(strsplit(sel, ','));
+            sel = strtrim(strsplit(get_param(srcBlk, 'OutputSignals'), ','));
+            if strcmp(get_param(srcBlk, 'OutputAsBus'), 'on')
+                names = sel;
+            else
+                % Each selected signal leaves on a port of its own, so this line carries
+                % only the one on the port it is wired to. Naming them all would set the
+                % input width to the whole selection and fail at compile.
+                names = sel(get_param(srcPort, 'PortNumber'));
+            end
 
         otherwise
             names = {signalName(line, srcBlk)};
@@ -123,14 +130,21 @@ end
 function names = makeUnique(names)
 % Duplicate names would collapse two signals into one channel in Nominal, losing data
 % silently. Suffix instead, and leave it visible so the user can rename properly.
-    seen = containers.Map('KeyType', 'char', 'ValueType', 'double');
+%
+% A suffix must avoid every name in the list, not only the ones already seen: with
+% {'x', 'x', 'x_2'} the second 'x' cannot become 'x_2', or the third signal's own name
+% would then collide with it.
+    original = names;
+    used = containers.Map('KeyType', 'char', 'ValueType', 'logical');
     for i = 1:numel(names)
         base = names{i};
-        if seen.isKey(base)
-            seen(base) = seen(base) + 1;
-            names{i} = sprintf('%s_%d', base, seen(base));
-        else
-            seen(base) = 1; %#ok<NASGU>
+        name = base;
+        k = 1;
+        while used.isKey(name) || (k > 1 && any(strcmp(original, name)))
+            k = k + 1;
+            name = sprintf('%s_%d', base, k);
         end
+        names{i} = name;
+        used(name) = true;
     end
 end

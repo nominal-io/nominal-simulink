@@ -34,6 +34,35 @@ classdef AutonamesTest < BlocksetTestCase
             tc.verifyEqual(nominal_sink_autonames(blk), {'dup', 'dup_2'});
         end
 
+        function aSuffixNeverCollidesWithAnotherName(tc)
+            % Suffixing the second 'x' as 'x_2' would collide with the third signal,
+            % which is already called that.
+            [model, blk] = BlocksetTestCase.sinkModel('nm_names_suffix');
+            add_block('simulink/Signal Routing/Mux', [model '/mux'], 'Inputs', '3');
+            AutonamesTest.feed(model, 'mux', {'x', 'x', 'x_2'});
+            add_line(model, 'mux/1', 'sink/1');
+            names = nominal_sink_autonames(blk);
+            tc.verifyEqual(numel(unique(names)), 3, strjoin(names, ', '));
+            tc.verifyEqual(names([1 3]), {'x', 'x_2'}, 'names the user gave are kept');
+        end
+
+        function busSelectorPortsNameOnlyTheirOwnSignal(tc)
+            % With "Output as virtual bus" off, each selected signal leaves on its own
+            % port. Naming the whole selection made the channel list wider than the
+            % input, and the model failed to compile.
+            [model, blk] = AutonamesTest.buildSelector('nm_names_selector', 'off');
+            tc.verifyEqual(nominal_sink_autonames(blk), {'c'});
+            set_param(blk, 'channels', '''c''');
+            sim(model, 'StopTime', '0.03');
+        end
+
+        function busSelectorBusNamesTheWholeSelection(tc)
+            [model, blk] = AutonamesTest.buildSelector('nm_names_selbus', 'on');
+            tc.verifyEqual(nominal_sink_autonames(blk), {'a', 'c'});
+            set_param(blk, 'channels', '''a, c''');
+            sim(model, 'StopTime', '0.03');
+        end
+
         function anUnconnectedInputIsReported(tc)
             [~, blk] = BlocksetTestCase.sinkModel('nm_names_none');
             tc.verifyError(@() nominal_sink_autonames(blk), 'nominal:autonames');
@@ -90,6 +119,26 @@ classdef AutonamesTest < BlocksetTestCase
             end
             AutonamesTest.feed(model, 'mux', labels);
             add_line(model, 'mux/1', 'sink/1');
+        end
+
+        function [model, blk] = buildSelector(name, asBus)
+        % a, b, c into a Bus Creator; a Bus Selector picks a and c. With asBus off it
+        % has a port per signal, and port 2 (carrying c) is the one wired to the sink.
+            [model, blk] = BlocksetTestCase.sinkModel(name, ...
+                'datasetRid', '''ri.catalog.test.dataset.0''', 'mode', 'Via proxy', ...
+                'proxyHost', '''127.0.0.1''', 'proxyPort', '1');
+            add_block('simulink/Signal Routing/Bus Creator', [model '/bus'], 'Inputs', '3');
+            AutonamesTest.feed(model, 'bus', {'a', 'b', 'c'});
+            add_block('simulink/Signal Routing/Bus Selector', [model '/sel']);
+            add_line(model, 'bus/1', 'sel/1');
+            set_param([model '/sel'], 'OutputSignals', 'a,c', 'OutputAsBus', asBus);
+            if strcmp(asBus, 'on')
+                add_line(model, 'sel/1', 'sink/1');
+            else
+                add_line(model, 'sel/2', 'sink/1');
+                add_block('simulink/Sinks/Terminator', [model '/term']);
+                add_line(model, 'sel/1', 'term/1');
+            end
         end
 
         function feed(model, into, labels)
