@@ -84,3 +84,8 @@ ext/
 # Real proxy config holds a token; only the template is committed
 nmproxy/nmproxy.yaml
 nmproxy.yaml
+
+# The docs build and its Python environment
+docs/_build/
+.venv/
+__pycache__/

@@ -4,7 +4,7 @@
 # eaten as escapes before the path reaches the executable.
 
 # vcpkg supplies libcurl. Without its toolchain CMake finds whatever happens to be
-# installed, which on this machine was GStreamer's bundled copy.
+# installed, which on one development machine was GStreamer's bundled copy.
 # VCPKG_ROOT is normally set with backslashes, which bash eats as escapes, so
 # normalise rather than trusting however it happens to be set.
 vcpkg  := replace(env_var_or_default("VCPKG_ROOT", "C:/tools/vcpkg"), "\\", "/")
@@ -14,14 +14,15 @@ vcpkg  := replace(env_var_or_default("VCPKG_ROOT", "C:/tools/vcpkg"), "\\", "/")
 # are going, since Simulink Real-Time packs .a libraries into the application itself.
 triplet := env_var_or_default("VCPKG_TRIPLET", "x64-windows-static-md")
 
-# MATLAB is often not on PATH. Override with the install root, forward slashes only:
-#   just matlabroot='C:/Program Files/MATLAB/R2025b' sim-test
+# Recipes call MATLAB by full path. Override either install root, forward slashes only:
+#   just oldestroot='C:/Program Files/MATLAB/R2022a' matlabroot='C:/Program Files/MATLAB/R2025b' sim-test
+# or set MATLAB_OLDEST and MATLABROOT.
 #
 # Two releases, with different jobs. The oldest one the blockset supports builds
 # everything that ships: a library opens only in the release that saved it or a later
 # one, and a MEX built against an older release loads in newer ones but not the
-# reverse. The newest runs the tooling that needs it — packaging needs R2023a+, and
-# code generation needs Simulink Coder, which is only installed there.
+# reverse. The newest packages the toolbox (ToolboxOptions needs R2023a or later) and
+# builds the second docs search index.
 oldestroot := env("MATLAB_OLDEST", "C:/Program Files/MATLAB/R2021b")
 matlabroot := env("MATLABROOT", "C:/Program Files/MATLAB/R2026a")
 oldest     := oldestroot + "/bin/matlab.exe"
@@ -48,8 +49,8 @@ build: configure
 test: build
     cd {{builddir}} && ctest -C {{config}} --output-on-failure
 
-# Build the relay for this machine into build/. Releases carry builds for each platform,
-# made by CI with the same flags.
+# Build the relay for this machine into build/. Release builds for each platform come
+# from CI, which also strips symbols and disables cgo.
 relay:
     cd nmproxy && go build -trimpath \
       -ldflags "-X main.version=$(tr -d '[:space:]' < ../simulink/VERSION)-dev" \
@@ -60,8 +61,8 @@ relay-test:
     cd nmproxy && go vet ./... && go test ./...
 
 # Usage:
-#   just demo rid=ri.catalog....
-#   just demo rid=ri.catalog.... base=https://api.example.nominal.io/api
+#   just demo ri.catalog....
+#   just demo ri.catalog.... https://api.example.nominal.io/api
 #
 # Stream synthetic data to a real dataset — needs NOMINAL_TOKEN
 demo rid base="": build
@@ -69,17 +70,19 @@ demo rid base="": build
 
 # Guards against protocol drift: captures what the Rust client actually puts on the
 # wire, and test_encode is pinned byte-for-byte against it. Run after upgrading
-# nominal-streaming — a change here means this library needs updating, and it is how we
-# caught the body encoding switching from snappy to zstd.
+# nominal-streaming. If the regenerated fixtures differ from the committed ones,
+# libnominalstream needs updating. That is how the body encoding switching from snappy
+# to zstd was caught.
 #
 # Regenerate the golden protobuf fixtures from nominal-streaming
 fixtures:
     cd tools/fixturegen && cargo run --release
 
-# Pins the MATLAB and Go frame decoders against the C encoder, so three independent
-# codec implementations agree by construction rather than by inspection.
+# The MATLAB and Go frame decoders are tested against cstream/tests/fixtures/frames.txt,
+# so all three codecs are checked against the same bytes. This prints the HELLO and DATA
+# frames the C encoder makes. Paste them into that file when the frame format changes.
 #
-# Regenerate the golden host-to-proxy frames
+# Print the golden host-to-proxy frames for frames.txt
 frames: build
     {{builddir}}/cstream/{{config}}/test_frame.exe --fixtures
 
@@ -117,7 +120,7 @@ matlab-test:
 
 # Usage:
 #   just matlab-proxy            listen on 15400 until Ctrl-C
-#   just matlab-proxy port=15401
+#   just matlab-proxy 15401      listen on 15401
 #
 # Run the readable reference proxy — decodes and reports, writes nothing
 matlab-proxy port="15400":
@@ -133,3 +136,14 @@ clean:
 # Show what is available
 help:
     @just --list
+
+# The user docs in docs/, published on the Nominal docs hub at /matlab/simulink/. Python is
+# here only for these, through uv. Warnings fail the build, as they do in CI.
+#
+# Build the docs into docs/_build/dirhtml
+build-docs:
+    uv run --group docs sphinx-build -E -W --keep-going -b dirhtml docs docs/_build/dirhtml
+
+# Serve the docs on http://127.0.0.1:8000, rebuilding on page or source edits
+serve-docs:
+    uv run --group docs --with sphinx-autobuild sphinx-autobuild -b dirhtml docs docs/_build/dirhtml --watch simulink --watch cstream/src --watch nmproxy
