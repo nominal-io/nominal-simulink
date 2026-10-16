@@ -1,36 +1,51 @@
 %% Troubleshooting
-% What to check when data does not arrive.
+% What to do when data doesn't arrive in Nominal.
 
-%% No Data Appears, and No Error
-% Check that *API base URL* matches the dataset's environment. A staging RID against
-% the production host is the usual cause.
-
-%% A Warning at the End of the Run
-%   Warning: Nominal Stream Sink: 412 of 2001 rows did not reach Nominal
-%   (2 requests failed, last HTTP status 0). Last error: Could not connect to server
+%% An Error When the Model Starts
+% The block's errors start with |Nominal Stream Sink:| and say what to change. Two come
+% up on a first run:
 %
-% The block reports loss when the simulation stops, whether or not the output port is
-% enabled. The last error names the cause. HTTP status 0 means no response arrived at
-% all: check the URL, and that this machine can reach it.
+% * |NOMINAL_TOKEN is not set| means MATLAB has no API key. Run
+%   |setenv('NOMINAL_TOKEN', '<API key>')| in the same MATLAB session, then run the model
+%   again.
+% * A message that a field |must be text in quotes|, or Simulink reporting that it can't
+%   evaluate a parameter, means a text value is missing its quotes.
 
-%% Rows Dropped With No Request Errors
-% The buffer filled: the model produced rows faster than the network drained them.
-% Raise *Buffer capacity*, increase *Sample time* to write less often, or move to
-% <streaming_via_proxy.html proxy mode>.
+%% A Warning When the Run Ends
+% The block warns when rows didn't reach Nominal, whether or not its output port is on:
+%
+%   Nominal Stream Sink: <dropped> of <total> rows did not reach Nominal (<cause>).
+%   Last error: <reason>
+%
+% The second number is every row the model produced in the run. What to do depends on the
+% cause, in the parentheses:
+%
+% * |the buffer filled faster than the network drained it|: rows arrived faster than
+%   they could be sent. Raise *Buffer capacity (rows)*, raise the sample time to write
+%   less often, or switch to <streaming_via_proxy.html proxy mode>. For a simulation that
+%   runs faster than real time, a buffer that holds every row of the run also works.
+% * |requests failed, the last with HTTP status| followed by a number: Nominal refused
+%   the rows, and the |Last error| gives its reason. Check that *API base URL* is the API
+%   URL of the instance the dataset belongs to, that *Dataset RID* is right, and that the
+%   API key is current.
+% * |requests failed, the last with no response|: the computer couldn't reach *API base
+%   URL*. Check the URL and the network.
+% * |packets could not be sent to the relay|: check that |nmproxy| is running at *Proxy
+%   host* and *Proxy port*.
 
-%% Nothing Reaches the Relay
-% Confirm the port matches on both sides, and that the relay listens somewhere this
-% machine can reach: |listen: "127.0.0.1:15400"| accepts only from its own machine.
-% Check the relay's log for |bad_frames| or |wrong_version|. There is no channel back
-% to the block, so a version mismatch otherwise looks the same as a network fault.
+%% Nothing Arrives Through the Relay
+% Check the relay's log. A |stats| line with |rows=0| means packets aren't reaching it:
+% check that its |listen| address accepts packets from the computer running the model,
+% and that a firewall allows UDP on the port. |wrong_version| above 0 means the blockset
+% and |nmproxy| come from different releases. A dataset missing from |allowed_datasets|
+% is refused, with a warning that names it.
 
 %% "Undefined function" or "S-Function does not exist"
-% The blockset's folders are not on the MATLAB path. Installing the toolbox puts them
-% there. If the blockset is used from a copy of its source instead, run
-% |nominal_setup| from that copy.
+% The blockset's folders aren't on the MATLAB path. Check that the Nominal Blockset is
+% installed for the release of MATLAB you're running, and install it again if it isn't.
 
 %% See Also
-% <nominal_stream_sink.html Nominal Stream Sink> |
-% <streaming_via_proxy.html Streaming Through a Relay>
+% <html><a href="nominal_stream_sink.html">Nominal Stream Sink</a> |
+% <a href="streaming_via_proxy.html">Streaming Through a Relay</a></html>
 %
 % Nominal Blockset @VERSION@

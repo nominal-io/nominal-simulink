@@ -1,111 +1,186 @@
 %% Nominal Stream Sink
-% Stream the input vector to a Nominal dataset while the model runs.
+% Stream signals to a Nominal dataset while the model runs
 %
 % <html><b>Library:</b> Nominal</html>
 
 %% Description
-% The Nominal Stream Sink block writes one row per sample period to a Nominal dataset.
-% Each element of the input is one channel, in the order the channel names are listed.
+% The Nominal Stream Sink block writes the signals wired into it to an existing Nominal
+% dataset while the model runs. Each element of the input is one channel, named by
+% *Channel names (comma-separated)* in the same order.
 %
-% Writing happens on a background thread, so no network or TLS work occurs in the
-% model step and no memory is allocated there: all of it is reserved when the model
-% starts. If the network cannot keep up, rows are discarded and counted rather than
-% stalling the model.
+% While the model runs, the block never waits for the network. If sending falls behind,
+% it drops rows rather than slowing the model, and warns at the end of the run with how
+% many.
 %
-% The block has two transports, chosen by the *Mode* parameter, so moving from one to
-% the other is a change of setting rather than a rewiring:
+% *Mode* chooses how the data leaves the model:
 %
-% * *Direct to Nominal* — this machine sends HTTPS to Nominal itself. Nothing else to
-%   run.
-% * *Via proxy* — this machine sends compact UDP datagrams to a relay, which does the
-%   encoding and HTTPS. See <streaming_via_proxy.html Streaming Through a Relay>.
+% * *Direct to Nominal* sends it over HTTPS from the computer running the model, using
+%   the API key in the |NOMINAL_TOKEN| environment variable.
+% * *Via proxy* sends it over UDP to |nmproxy|, a relay that holds the API key and
+%   writes to Nominal. See <streaming_via_proxy.html Streaming Through a Relay>.
+%
+% The block's label on the canvas shows the mode it sends in: *(direct)* or *(proxy)*.
+
+%% Examples
+% <matlab:open_system(fullfile(nominal_root,'examples','nominal_stream_example.slx')) Open
+% the example model>. It streams three signals through a relay, and runs without an API
+% key or a relay.
 
 %% Ports
 % *Input*
 %
-% A vector of doubles, one element per channel. The width must equal the number of
-% channel names. To record several signals, combine them with a Mux or a Bus Creator.
+% *Port_1* — the signals to record, as a vector
 %
-% *Output* (optional)
+% A vector of doubles, one element per channel, whose width equals the number of channel
+% names. To record several signals, wire them into a Mux or a Bus Creator. Signals of
+% other types need a Data Type Conversion block set to |double|.
 %
-% The running count of discarded rows. Present only when *Add an output port with the
-% discarded-row count* is selected.
+% *Output*
+%
+% *Port_1* — rows dropped so far, as a scalar
+%
+% The number of rows dropped so far in the current run, as a double. The port exists
+% only when *Add an output port with the discarded-row count* is selected.
 
 %% Parameters
+% Text parameters take a MATLAB expression, so enter text in single or double quotes, or
+% the name of a variable that holds the text. No parameter can change while the model
+% runs. The dialog greys out *API base URL* in proxy mode, and *Proxy host* and *Proxy
+% port* in direct mode.
+%
+% To set a parameter from code, use its programmatic name. A text value keeps its quotes
+% inside the string:
+%
+%   set_param(blk, 'datasetRid', '''<dataset RID>''')
+%
+% *Channel names (comma-separated)* — the channel names, in input order
+%
+% The number of names sets the width of the block's input. Spaces around each name are
+% ignored, and so are empty entries. *Detect from connected signal* fills them in from
+% the model.
+%
+% Programmatic name: |channels|. Default: |'engine.rpm, engine.egt, engine.psi'|.
+%
+% *Detect from connected signal* — fill in the channel names from the model
+%
+% Reads the names from whatever is wired into the block, without compiling the model:
+%
+% * From a Mux, each input line's name, or the name of the block the line comes from if
+%   the line has none. An input fed by a Bus Creator, Bus Selector or another Mux gives
+%   the names described below, and an input with nothing connected is named by position:
+%   |in1|, |in2| and so on.
+% * From a Bus Creator, the bus element names.
+% * From a Bus Selector, every selected signal when *Output as virtual bus* is on, or the
+%   signal on the port wired to the block when it is off.
+% * From any other block, the line's name, or the name of the block it comes from.
+%
+% When names repeat, the second gets |_2| added, the third |_3|, and so on, skipping any
+% name already in the list. A vector signal that carries one name gives one channel
+% name, and the model then fails with a port width mismatch. Wire its elements into a
+% Mux as named lines, or type the names.
+%
+% *Dataset RID* — the dataset to write to
+%
+% The RID of an existing Nominal dataset. The block does not create datasets. Required.
+%
+% Programmatic name: |datasetRid|. Default: |''|.
+%
+% *Mode* — how the data leaves the model
+%
+% *Direct to Nominal* or *Via proxy*, as described above.
+%
+% Programmatic name: |mode|. Values: |'Direct to Nominal'| (default), |'Via proxy'|.
+%
+% *API base URL* — the Nominal instance to write to
+%
+% Direct mode only, and required there. The REST API base URL of the Nominal instance
+% the dataset belongs to: the *API URL* on your organization's *API keys* page in
+% Nominal. The default is the standard cloud instance.
+%
+% Programmatic name: |baseUrl|. Default: |'https://api.gov.nominal.io/api'|.
+%
+% *Proxy host* — where the relay runs
+%
+% Proxy mode only. The name or IP address of the computer running |nmproxy|.
+%
+% Programmatic name: |proxyHost|. Default: |'127.0.0.1'|.
+%
+% *Proxy port* — the relay's UDP port
+%
+% Proxy mode only. The port |nmproxy| listens on, from 1 to 65535.
+%
+% Programmatic name: |proxyPort|. Default: |15400|.
+%
+% *Sample time (s) — how often to write, not the solver step* — seconds between rows
+%
+% How often the block takes a row from its input. It is separate from the solver step:
+% with a 1 ms fixed step and a sample time of 0.01, the block writes on every tenth
+% step. A value of 0 or less, including -1, uses 0.001.
+%
+% Programmatic name: |sampleTime|. Default: |0.001|.
+%
+% *Buffer capacity (rows)* — rows held while they wait to be sent
+%
+% Rows arriving while the buffer is full are dropped. In a model running in real time at
+% 1000 rows a second, 60000 rows holds a minute. The buffer is reserved when the run
+% starts, so a larger one uses more memory. When the run ends, the block spends up to 15
+% seconds sending what is left in the buffer, and counts rows still unsent as dropped. A
+% value of 0 uses 4096.
+%
+% Programmatic name: |capacityRows|. Default: |4096|.
+%
+% *Timestamps* — the time on each row
+%
+% *Simulation time from start* stamps each row with the time the run started plus the
+% row's simulation time, so the points keep the model's time axis however fast the
+% simulation runs. *Host wall clock* stamps each row with the computer's clock when the
+% block writes it. Use it when the model runs in real time alongside hardware.
+%
+% Programmatic name: |timeMode|. Values: |'Simulation time from start'| (default),
+% |'Host wall clock'|.
+%
+% *Add an output port with the discarded-row count* — show drops while the model runs
+%
+% Adds the output port described under Ports.
+%
+% Programmatic name: |showDropped|. Values: |'off'| (default), |'on'|.
+
+%% Environment Variables
+% The block reads these when a run starts. Proxy mode uses neither.
+%
+% *NOMINAL_TOKEN* — your Nominal API key. Required in direct mode. Set it before
+% starting MATLAB, or in MATLAB before you run the model:
+%
+%   setenv('NOMINAL_TOKEN', '<API key>')
+%
+% The key is read from the environment so that it is never saved in the model file.
+%
+% *NOMINAL_CA_BUNDLE* — the path to a PEM file of CA certificates to verify Nominal's
+% HTTPS certificate with. Set it when your Nominal instance or your network uses
+% certificates that the operating system doesn't trust.
+
+%% Block Characteristics
 % <html>
 % <table border="1" cellpadding="6" cellspacing="0">
-% <tr><th>Parameter</th><th>What it does</th></tr>
-% <tr><td>Channel names (comma-separated)</td>
-%     <td>Names as they appear in Nominal, for example
-%         <tt>'engine.rpm, engine.egt, engine.psi'</tt>. The count sets the input port
-%         width. Use <b>Detect from connected signal</b> rather than typing them.</td></tr>
-% <tr><td>Detect from connected signal</td>
-%     <td>Reads the names off whatever is wired into the input: a Bus Creator's element
-%         names, each line into a Mux, a Bus Selector's selected signals, or otherwise
-%         the signal's name or its source block's. Duplicates get a <tt>_2</tt> suffix
-%         rather than collapsing two signals into one channel.</td></tr>
-% <tr><td>Dataset RID</td>
-%     <td>An existing Nominal dataset. The block writes points; it does not create
-%         datasets.</td></tr>
-% <tr><td>Mode</td>
-%     <td><tt>Direct to Nominal</tt> or <tt>Via proxy</tt>. Fields the selected mode
-%         ignores are greyed out.</td></tr>
-% <tr><td>API base URL</td>
-%     <td>Direct mode only. Must match the dataset's environment: a staging RID does
-%         not resolve against the production host.</td></tr>
-% <tr><td>Proxy host, Proxy port</td>
-%     <td>Proxy mode only. Where the relay is listening.</td></tr>
-% <tr><td>Sample time (s)</td>
-%     <td>How often to write. This is decimation, not the solver step: a 1 ms solver
-%         step with a 10 ms sample time writes every tenth step.</td></tr>
-% <tr><td>Buffer capacity (rows)</td>
-%     <td>Rows held in memory while the network drains. Reserved at model start and
-%         never grown. At 1 kHz, 60000 rows is a minute of headroom.</td></tr>
-% <tr><td>Timestamps</td>
-%     <td><tt>Simulation time from start</tt> gives a time axis matching the model,
-%         which is what an offline run wants. <tt>Host wall clock</tt> is for real-time
-%         and hardware-in-the-loop.</td></tr>
-% <tr><td>Add an output port with the discarded-row count</td>
-%     <td>Off by default, because Simulink treats an unconnected output as an error.
-%         The block warns at the end of a run whether or not this is on.</td></tr>
+% <tr><td>Data Types</td><td>double</td></tr>
+% <tr><td>Direct Feedthrough</td><td>yes</td></tr>
+% <tr><td>Multidimensional Signals</td><td>no</td></tr>
+% <tr><td>Variable-Size Signals</td><td>no</td></tr>
+% <tr><td>Zero-Crossing Detection</td><td>no</td></tr>
 % </table>
 % </html>
 
-%% The Access Token
-% Direct mode reads the token from the |NOMINAL_TOKEN| environment variable. Set it
-% before starting MATLAB, or at the MATLAB prompt:
+%% Extended Capabilities
+% *C/C++ Code Generation*
 %
-%   setenv('NOMINAL_TOKEN', '<your token>')
-%
-% It is deliberately not a block parameter: mask values are saved in the model file,
-% so a token typed into the dialog would be a credential committed with the model.
-%
-% Proxy mode needs no token. The dataset RID travels in the datagrams and the
-% credential stays on the relay.
+% Not supported. The block runs in Normal and Accelerator simulation modes.
 
-%% Seeing Data Arrive Live
-% A model normally runs as fast as it can, so a 60-second simulation finishes in about
-% a second. To watch points appear in Nominal as the model runs, turn on *Run >
-% Simulation Pacing > Enable pacing* at 1x real time.
-
-%% Loss
-% When the simulation stops, the block warns if any rows did not reach Nominal:
-%
-%   Warning: Nominal Stream Sink: 412 of 2001 rows did not reach Nominal
-%   (2 requests failed, last HTTP status 0). Last error: Could not connect to server
-%
-% The number after "of" is what the model produced, so the ratio tells you whether it
-% was a blip or a total failure.
-
-%% Simulation Modes and Code Generation
-% The block runs in Normal and Accelerator simulation modes.
-%
-% Code generation is not yet supported, so the block cannot yet be deployed to a
-% Simulink Real-Time target. That support is planned.
+%% Version History
+% *Introduced in Nominal Blockset 0.1.0*
 
 %% See Also
-% <streaming_via_proxy.html Streaming Through a Relay> |
-% <troubleshooting.html Troubleshooting> |
-% <nominal_blockset.html Nominal Blockset>
+% <html><a href="streaming_via_proxy.html">Streaming Through a Relay</a> |
+% <a href="troubleshooting.html">Troubleshooting</a> |
+% <a href="nominal_blockset.html">Nominal Blockset</a></html>
 %
 % Nominal Blockset @VERSION@

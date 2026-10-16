@@ -1,54 +1,62 @@
 %% Streaming Through a Relay
-% Move the encoding, TLS and HTTP off the machine running the model.
-
-%% When to Use It
-% In direct mode the model step stays cheap, but the block's background thread still
-% pays for protobuf encoding, TLS and HTTP on the same machine. On a host already at its
-% performance limit that can be too much.
+% Keep the API key off the computer running the model.
 %
-% In proxy mode the block sends compact UDP datagrams instead, and a relay process on
-% another machine does the rest. The model's host does little more than a |sendto|,
-% and holds no credential.
-%
-%   Simulink host                     relay machine
-%   +---------------+   UDP frames   +----------+   HTTPS
-%   | model + block | -------------> | nmproxy  | --------> Nominal
-%   +---------------+                +----------+
-%     no token here                   token here
+% In proxy mode the block sends its rows as UDP packets to |nmproxy|, a relay that can run
+% on another computer or on the same one. The relay holds the API key and writes the rows
+% to Nominal, so the computer running the model needs only the dataset's RID and the
+% relay's address. Use proxy mode when that computer shouldn't hold an API key, such as a
+% shared test bench, or when it has no processing time to spare for sending data.
 
-%% Run the Relay
-% The relay, |nmproxy|, is in the
-% <https://github.com/nominal-io/nominal-simulink nominal-simulink repository>, with an
-% example configuration. The two settings that matter:
+%% Get the Relay
+% Download the |nmproxy| archive for your platform from the latest release on the
+% <https://github.com/nominal-io/nominal-simulink/releases releases page>. Each archive
+% holds the |nmproxy| program and |nmproxy.example.yaml|, an example configuration to
+% start from.
+
+%% Configure It
+% Create |nmproxy.yaml|:
 %
 %   nominal:
-%     token: "<your token>"
+%     base_url: "<API URL>"
+%     token: "<API key>"
 %
 %   allowed_datasets:
-%     - "ri.catalog.your-env.dataset.0000..."
+%     - "<dataset RID>"
 %
-% *Set |allowed_datasets|.* The datagrams are not authenticated, so anything that can
-% reach the relay's port can otherwise write to any dataset its token permits. Listing
-% the datasets you expect bounds the damage. The relay warns at startup if the list is
-% empty.
+% The API URL and the API key are on your organization's *API keys* page in Nominal.
 %
-% To check that frames arrive before involving real credentials, set |dry_run: true|.
-% The relay then decodes and reports everything and writes nothing.
+% List every dataset the relay should write to under |allowed_datasets|. The relay
+% doesn't authenticate senders, so without the list anything that can reach its port can
+% write to any dataset your API key can.
+%
+% The relay listens on UDP port 15400 on every network interface. To accept packets on
+% one interface only, add |listen: "<interface address>:15400"|.
+
+%% Start It
+% From the folder holding |nmproxy| and |nmproxy.yaml|:
+%
+%   ./nmproxy -config nmproxy.yaml
+%
+% The relay logs a |listening| line with its address, and runs until you press Ctrl+C.
+%
+% To check that packets arrive before you involve an API key, use a configuration file
+% that contains only |dry_run: true|. The relay then logs what arrives and writes nothing.
 
 %% Point the Block at It
-% Set *Mode* to |Via proxy|, then *Proxy host* and *Proxy port* to where the relay
-% listens. Nothing else changes: the same channel names, dataset RID and sample time
-% apply.
-
-%% What You Give Up
-% * The relay is a second process to deploy and keep running.
-% * The model cannot see loss between it and the relay; the relay counts it, from
-%   sequence numbers, and reports it in its log as |gaps|.
-% * A relay that restarts mid-run recovers on its own within a second, because the
-%   block repeats the channel layout every second.
+% In the block's dialog, set *Mode* to *Via proxy*, *Proxy host* to the relay computer's
+% name or IP address in quotes, and *Proxy port* to the relay's port. *Dataset RID* and
+% the channel names stay as they were. Proxy mode doesn't use |NOMINAL_TOKEN|.
+%
+% When the model runs, the relay logs |configuration registered| and then |session
+% started|. Every 30 seconds it logs a |stats| line. In it, |rows| above 0 means data is
+% reaching the relay, |gaps| counts packets lost on the way, and |write_errors| counts
+% rows the relay couldn't write to Nominal.
+%
+% The block's own end-of-run warning covers only rows it couldn't send. Packets lost on
+% the way to the relay appear only as |gaps| in the relay's log.
 
 %% See Also
-% <nominal_stream_sink.html Nominal Stream Sink> |
-% <troubleshooting.html Troubleshooting>
+% <html><a href="nominal_stream_sink.html">Nominal Stream Sink</a> |
+% <a href="troubleshooting.html">Troubleshooting</a></html>
 %
 % Nominal Blockset @VERSION@

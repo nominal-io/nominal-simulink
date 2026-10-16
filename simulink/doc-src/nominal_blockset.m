@@ -1,48 +1,48 @@
 %% Nominal Blockset
 % Stream signals from a running Simulink model into a Nominal dataset.
 %
-% The blockset holds one block, *Nominal Stream Sink*. Wire the signals you want
-% recorded into it, give it a dataset, and the samples arrive in Nominal while the model
-% runs.
-%
-% The block does almost nothing in the model step: it copies one row into a buffer
-% reserved when the model starts, and a background thread does the encoding, TLS and
-% HTTP. If the network cannot keep up it discards rows and tells you, rather than
-% stalling the model. Stopping a simulation that is driving real hardware is worse than
-% losing telemetry.
+% The blockset has one block, *Nominal Stream Sink*. It writes the signals wired into it
+% to a Nominal dataset while the model runs, one channel per signal. While the model
+% runs, the block never waits for the network: if sending falls behind, it drops rows
+% rather than slowing the model, and says how many at the end of the run.
 
 %% Blocks
 % <html>
 % <table border="1" cellpadding="6" cellspacing="0">
 % <tr><td><a href="nominal_stream_sink.html">Nominal Stream Sink</a></td>
-%     <td>Stream the input vector to a Nominal dataset, directly over HTTPS or through
-%         a relay</td></tr>
+%     <td>Stream signals to a Nominal dataset while the model runs, directly over HTTPS
+%         or through a relay</td></tr>
 % </table>
 % </html>
 
 %% Getting Started
-% # In the Library Browser, open *Nominal* and drag *Nominal Stream Sink* into your
-%   model.
-% # Wire the signals you want recorded into its input, through a Mux or a Bus Creator.
+% You need an existing dataset in Nominal and its RID, an API key, and your Nominal
+% instance's API URL. The API key and the API URL are both on your organization's *API
+% keys* page in Nominal.
+%
+% # Open the Library Browser, expand *Nominal*, and drag *Nominal Stream Sink* into your
+%   model. Typing |Nominal| on the canvas also finds it.
+% # Wire the signals you want to record into a Mux, and the Mux into the block.
 % # Double-click the block and click *Detect from connected signal* to fill in the
 %   channel names.
-% # Enter the *Dataset RID* of an existing Nominal dataset.
-% # Set the access token in the environment, then run the model:
+% # Enter the dataset's RID in *Dataset RID*, and your instance's API URL in *API base
+%   URL*, both in quotes.
+% # Set your API key, then run the model:
 %
-%   setenv('NOMINAL_TOKEN', '<your token>')
+%   setenv('NOMINAL_TOKEN', '<API key>')
 %
-% The token is deliberately not a block parameter. Mask values are saved in the model
-% file, so a token typed into the dialog would be a credential committed with the model.
+% The block reads the API key from the environment so that it is never saved in the
+% model file.
 %
 % <matlab:open_system(fullfile(nominal_root,'examples','nominal_stream_example.slx')) Open
-% the example model>, which runs as it is: it streams through a relay, which needs no
-% token, and keeps running when no relay is listening.
+% the example model> to see the block in a model without setting anything up. It sends
+% through a relay, and runs without an API key or a relay.
 
 %% Topics
-% * <nominal_stream_sink.html Nominal Stream Sink> — every parameter, and how the block
-%   behaves
-% * <streaming_via_proxy.html Streaming Through a Relay> — for hosts with no headroom
-%   to spare, or that should hold no credential
-% * <troubleshooting.html Troubleshooting>
+% * <nominal_stream_sink.html Nominal Stream Sink>: every parameter, its ports, and what
+%   the block does when sending falls behind.
+% * <streaming_via_proxy.html Streaming Through a Relay>: keep the API key off the
+%   computer running the model.
+% * <troubleshooting.html Troubleshooting>: what to do when data doesn't arrive.
 %
 % Nominal Blockset @VERSION@
