@@ -70,10 +70,11 @@ struct nm_stream {
     volatile int running;
     uint32_t  batch_delay_ms;
 
-    /* Counters. Each is written by exactly one thread -- accepted and dropped-on-full
-     * by the producer, the rest by the sender -- and read by nm_stats. Aligned 64-bit
-     * reads are atomic on the targets we build for, so nm_stats needs no lock and
-     * stays safe to call from the same real-time context as nm_push. */
+    /* Counters. Each is written by exactly one thread -- pushed, accepted and
+     * dropped-on-full by the producer, the rest by the sender -- and read by nm_stats.
+     * Aligned 64-bit reads are atomic on the targets we build for, so nm_stats needs no
+     * lock and stays safe to call from the same real-time context as nm_push. */
+    uint64_t rows_pushed;
     uint64_t rows_accepted;
     uint64_t rows_dropped;
     uint64_t rows_sent;
@@ -130,23 +131,30 @@ static int copy_channels(nm_stream *s, const char *const *names, size_t count)
 
 /* ------------------------------------------------------------- proxy mode */
 
-/* Re-announce the channel mapping. Losing this to a dropped datagram is expected and
- * harmless, which is why it repeats rather than being checked. */
-static void send_hello(nm_stream *s)
+/* The channel mapping as one HELLO frame, or 0 if it does not fit a datagram. */
+static size_t encode_hello(const nm_stream *s, uint8_t *buf, size_t len)
 {
-    uint8_t      buf[NM_FRAME_MAX_BYTES];
-    const char  *names[NM_FRAME_MAX_CHANNELS];
-    size_t       i, n;
+    const char *names[NM_FRAME_MAX_CHANNELS];
+    size_t      i;
 
     if (s->channel_count > NM_FRAME_MAX_CHANNELS) {
-        return;
+        return 0;
     }
     for (i = 0; i < s->channel_count; i++) {
         names[i] = s->channels[i].name;
     }
+    return nm_frame_encode_hello(buf, len, s->session_id, s->config_id,
+                                 s->dataset_rid, names, s->channel_count);
+}
 
-    n = nm_frame_encode_hello(buf, sizeof buf, s->session_id, s->config_id,
-                              s->dataset_rid, names, s->channel_count);
+/* Re-announce the channel mapping. Losing this to a dropped datagram is expected and
+ * harmless, which is why it repeats rather than being checked. nm_open has already
+ * established that it fits. */
+static void send_hello(nm_stream *s)
+{
+    uint8_t buf[NM_FRAME_MAX_BYTES];
+    size_t  n = encode_hello(s, buf, sizeof buf);
+
     if (n > 0) {
         nm_udp_send(s->udp, buf, n);
     }
@@ -364,6 +372,18 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
          * and is sufficient: it only has to be distinct, not unpredictable. */
         s->session_id = s->config_id ^ (uint64_t)nm_now_nanos();
 
+        /* The channel count alone does not settle whether the mapping fits one
+         * datagram: the names and the RID travel in it too. One that does not fit
+         * could never be sent, so the relay would discard every row for want of a
+         * mapping while this side saw nothing wrong. Refuse it here instead. */
+        {
+            uint8_t probe[NM_FRAME_MAX_BYTES];
+            if (encode_hello(s, probe, sizeof probe) == 0) {
+                st = NM_ERR_TOO_LARGE;
+                goto fail;
+            }
+        }
+
         s->udp = nm_udp_open(cfg->proxy_host, cfg->proxy_port, err, sizeof err);
         if (s->udp == NULL) {
             memcpy(s->last_error, err, sizeof s->last_error > sizeof err
@@ -440,6 +460,7 @@ int nm_push(nm_stream *s, int64_t timestamp_nanos, const double *values, size_t 
         return NM_ERR_ARG;
     }
 
+    s->rows_pushed += 1;
     if (nm_ring_push(&s->ring, timestamp_nanos, values)) {
         s->rows_accepted += 1;
         return 0;
@@ -454,6 +475,7 @@ void nm_stats(const nm_stream *s, nm_stats_t *out)
     if (s == NULL || out == NULL) {
         return;
     }
+    out->rows_pushed      = s->rows_pushed;
     out->rows_accepted    = s->rows_accepted;
     out->rows_sent        = s->rows_sent;
     out->rows_dropped     = s->rows_dropped;
@@ -541,6 +563,8 @@ const char *nm_strerror(nm_status status)
     case NM_ERR_THREAD:    return "could not start sender thread";
     case NM_ERR_TRANSPORT: return "transport not initialised";
     case NM_ERR_CLOSED:    return "stream is closed";
+    case NM_ERR_TOO_LARGE: return "the dataset RID and channel names do not fit in one "
+                                  "proxy datagram; use fewer or shorter channel names";
     }
     return "unknown status";
 }

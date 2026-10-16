@@ -167,10 +167,13 @@ int main(int argc, char **argv)
 
     /* nm_close flushes, but it also frees the stream -- so poll until the sender has
      * accounted for every row, then report. Otherwise a total transport failure looks
-     * exactly like success: the loop still completes and the process still exits 0. */
+     * exactly like success: the loop still completes and the process still exits 0.
+     *
+     * Against rows_pushed, not rows_accepted: rows_dropped also counts rows refused at
+     * the ring, so comparing with the accepted count could stop the wait early. */
     for (i = 0; i < 100; i++) {
         nm_stats(s, &stats);
-        if (stats.rows_sent + stats.rows_dropped >= stats.rows_accepted) {
+        if (stats.rows_sent + stats.rows_dropped >= stats.rows_pushed) {
             break;
         }
         nm_demo_sleep_ms(100);

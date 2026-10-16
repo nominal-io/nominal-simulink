@@ -477,6 +477,10 @@ static void mdlTerminate(SimStruct *S)
      * Report only when something went wrong. This is what keeps loss from being silent
      * now that the output port is off by default: a run that dropped rows says so,
      * whether or not anyone wired up the diagnostic.
+     *
+     * The total is every row the model produced, not only those that found room in the
+     * buffer. Rows discarded for want of room are part of the loss, so dividing by the
+     * accepted count could report more lost than written.
      */
     if (stats.rows_dropped > 0 || stats.requests_failed > 0) {
         static char warn[512];
@@ -484,7 +488,7 @@ static void mdlTerminate(SimStruct *S)
                  "Nominal Stream Sink: %llu of %llu rows did not reach Nominal "
                  "(%llu requests failed, last HTTP status %ld).%s%s",
                  (unsigned long long)stats.rows_dropped,
-                 (unsigned long long)stats.rows_accepted,
+                 (unsigned long long)stats.rows_pushed,
                  (unsigned long long)stats.requests_failed,
                  stats.last_http_status,
                  stats.last_error[0] != '\0' ? " Last error: " : "",

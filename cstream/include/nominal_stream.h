@@ -41,7 +41,8 @@ typedef enum {
     NM_ERR_ALLOC       = -2,  /* could not reserve the buffers at open time */
     NM_ERR_THREAD      = -3,  /* the sender thread would not start */
     NM_ERR_TRANSPORT   = -4,  /* the HTTP client could not be initialised */
-    NM_ERR_CLOSED      = -5   /* used after nm_close */
+    NM_ERR_CLOSED      = -5,  /* used after nm_close */
+    NM_ERR_TOO_LARGE   = -6   /* PROXY: the channel list does not fit one datagram */
 } nm_status;
 
 typedef struct nm_stream nm_stream;
@@ -107,7 +108,8 @@ typedef struct {
 } nm_config;
 
 typedef struct {
-    uint64_t rows_accepted;    /* handed to the library by nm_push */
+    uint64_t rows_pushed;      /* handed to nm_push, whether or not there was room */
+    uint64_t rows_accepted;    /* taken into the buffer by nm_push */
     uint64_t rows_sent;        /* acknowledged by the server */
     uint64_t rows_dropped;     /* discarded: buffer full, or the request failed */
     uint64_t requests_ok;

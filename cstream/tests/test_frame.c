@@ -12,6 +12,7 @@
  */
 
 #include "nm_frame.h"
+#include "nominal_stream.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -322,6 +323,84 @@ static void dump_fixture(const char *label, const uint8_t *buf, size_t n)
     }
 }
 
+/* A proxy-mode stream aimed at the discard port. Nothing needs to listen: UDP sends
+ * succeed or fail locally, and these tests are about what nm_open and nm_push decide. */
+static nm_stream *open_proxy(const char *const *names, size_t count, size_t capacity,
+                             nm_status *status)
+{
+    nm_config cfg;
+
+    memset(&cfg, 0, sizeof cfg);
+    cfg.mode               = NM_MODE_PROXY;
+    cfg.proxy_host         = "127.0.0.1";
+    cfg.proxy_port         = 9;
+    cfg.dataset_rid        = RID;
+    cfg.channel_names      = names;
+    cfg.channel_count      = count;
+    cfg.capacity_rows      = capacity;
+    /* Long enough that the sender cannot drain the ring between the pushes below. */
+    cfg.max_batch_delay_ms = 1000;
+    return nm_open(&cfg, status);
+}
+
+/*
+ * The channel count limit is not the only one. The HELLO also carries every name and the
+ * RID, so forty 40-byte names fit the count but not the datagram. That once passed
+ * nm_open, and the stream then never announced its mapping: the relay discarded every
+ * row and the host reported nothing wrong.
+ */
+static void test_open_refuses_a_mapping_too_large_to_send(void)
+{
+    static char        storage[40][41];
+    const char        *names[40];
+    nm_status          status = NM_OK;
+    nm_stream         *s;
+    size_t             i;
+
+    for (i = 0; i < 40; i++) {
+        snprintf(storage[i], sizeof storage[i], "subsystem.signal.with.a.long.name.%04u",
+                 (unsigned)i);
+        names[i] = storage[i];
+    }
+
+    s = open_proxy(names, 40, 16, &status);
+    check(s == NULL && status == NM_ERR_TOO_LARGE,
+          "nm_open refuses a channel list too large for one datagram");
+    nm_close(s);
+
+    s = open_proxy(NAMES, NCH, 16, &status);
+    check(s != NULL && status == NM_OK, "and still opens one that fits");
+    nm_close(s);
+}
+
+/*
+ * rows_dropped counts rows refused at the ring as well as rows that failed to send, so
+ * the total a loss is measured against must count them too. Measured against
+ * rows_accepted, the block once reported more rows lost than written.
+ */
+static void test_pushed_counts_rows_the_ring_refused(void)
+{
+    const double vals[NCH] = { 1.0, 2.0, 3.0 };
+    nm_status    status = NM_OK;
+    nm_stats_t   st;
+    nm_stream   *s;
+    int          i;
+
+    s = open_proxy(NAMES, NCH, 4, &status);
+    check(s != NULL, "a small proxy stream opens");
+    if (s == NULL) {
+        return;
+    }
+    for (i = 0; i < 10; i++) {
+        nm_push(s, 1000000000LL + i, vals, NCH);
+    }
+    nm_stats(s, &st);
+    check(st.rows_pushed == 10, "rows_pushed counts every row handed to nm_push");
+    check(st.rows_accepted < 10 && st.rows_accepted + st.rows_dropped == 10,
+          "rows the full ring refused are dropped, not accepted");
+    nm_close(s);
+}
+
 static void print_fixtures(void)
 {
     uint8_t  buf[NM_FRAME_MAX_BYTES];
@@ -355,6 +434,8 @@ int main(int argc, char **argv)
     test_data_roundtrip();
     test_data_respects_mtu();
     test_rejects_malformed();
+    test_open_refuses_a_mapping_too_large_to_send();
+    test_pushed_counts_rows_the_ring_refused();
 
     if (argc > 1 && strcmp(argv[1], "--fixtures") == 0) {
         print_fixtures();
