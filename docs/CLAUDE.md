@@ -44,5 +44,5 @@ Keep the facts in both consistent.
 Run it before calling a change done. `just serve-docs` serves a live preview on
 http://127.0.0.1:8000.
 
-`.github/workflows/docs-check.yml` builds every pull request. `deploy-docs.yml` deploys `main`
-to this repo's GitHub Pages once the repo is public, and pub-docs pulls that deploy.
+`.github/workflows/docs-check.yml` builds every pull request. `deploy-docs.yml` deploys every
+push to `main` to this repo's GitHub Pages, which are public, and pub-docs pulls that deploy.

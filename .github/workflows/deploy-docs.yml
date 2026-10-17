@@ -2,9 +2,8 @@
 # (nominal-io/pub-docs) pulls that upload and serves it at /matlab/simulink/, so the upload is
 # kept for 90 days (its default of one day is too short to rely on).
 #
-# The job runs only once the repo is public. Until then there is no Pages site to deploy to,
-# and docs-check.yml still builds every change. To start deploying, make the repo public and
-# set Settings > Pages > Source to "GitHub Actions".
+# Needs Settings > Pages > Source set to "GitHub Actions". The Pages site is public even
+# while the repo is private.
 name: Deploy Docs
 
 on:
@@ -23,7 +22,6 @@ concurrency:
 
 jobs:
   deploy:
-    if: ${{ !github.event.repository.private }}
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
