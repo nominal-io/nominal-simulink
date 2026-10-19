@@ -3,8 +3,11 @@
 # Recipes run through bash, so use forward slashes in overrides — backslashes are
 # eaten as escapes before the path reaches the executable.
 
-# vcpkg supplies libcurl. Without its toolchain CMake finds whatever happens to be
-# installed, which on one development machine was GStreamer's bundled copy.
+exe := if os() == "windows" { ".exe" } else { "" }
+
+# On Windows, vcpkg supplies libcurl. Without its toolchain CMake finds whatever happens
+# to be installed, which on one development machine was GStreamer's bundled copy. On
+# Linux and macOS, CMake finds the system's libcurl.
 # VCPKG_ROOT is normally set with backslashes, which bash eats as escapes, so
 # normalise rather than trusting however it happens to be set.
 vcpkg  := replace(env_var_or_default("VCPKG_ROOT", "C:/tools/vcpkg"), "\\", "/")
@@ -13,6 +16,8 @@ vcpkg  := replace(env_var_or_default("VCPKG_ROOT", "C:/tools/vcpkg"), "\\", "/")
 # the dynamic CRT that MATLAB MEX is built against. It also matches where the targets
 # are going, since Simulink Real-Time packs .a libraries into the application itself.
 triplet := env_var_or_default("VCPKG_TRIPLET", "x64-windows-static-md")
+
+curl := if os() == "windows" { "-DCMAKE_TOOLCHAIN_FILE=" + vcpkg + "/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=" + triplet } else { "" }
 
 # Recipes call MATLAB by full path. Override either install root, forward slashes only:
 #   just oldestroot='C:/Program Files/MATLAB/R2022a' matlabroot='C:/Program Files/MATLAB/R2025b' sim-test
@@ -23,23 +28,31 @@ triplet := env_var_or_default("VCPKG_TRIPLET", "x64-windows-static-md")
 # one, and a MEX built against an older release loads in newer ones but not the
 # reverse. The newest packages the toolbox (ToolboxOptions needs R2023a or later) and
 # builds the second docs search index.
-oldestroot := env("MATLAB_OLDEST", "C:/Program Files/MATLAB/R2021b")
-matlabroot := env("MATLABROOT", "C:/Program Files/MATLAB/R2026a")
-oldest     := oldestroot + "/bin/matlab.exe"
-matlab     := matlabroot + "/bin/matlab.exe"
+#
+# On a Mac, the oldest defaults to R2023b, the first release that runs natively on Apple
+# silicon. Both releases load the one MEX, so they have to be the same architecture, and
+# releases before R2023b are Intel builds. On an Intel Mac, set MATLAB_OLDEST to R2021b.
+matlabhome := if os() == "windows" { "C:/Program Files/MATLAB/" } else if os() == "macos" { "/Applications/MATLAB_" } else { "/usr/local/MATLAB/" }
+matlabapp  := if os() == "macos" { ".app" } else { "" }
+oldestrel  := if os() == "macos" { "R2023b" } else { "R2021b" }
+oldestroot := env("MATLAB_OLDEST", matlabhome + oldestrel + matlabapp)
+matlabroot := env("MATLABROOT", matlabhome + "R2026a" + matlabapp)
+oldest     := oldestroot + "/bin/matlab" + exe
+matlab     := matlabroot + "/bin/matlab" + exe
 
 config  := "Release"
 builddir := "build"
+
+# Visual Studio builds into a folder per configuration. Makefile and Ninja builds don't.
+cfgdir := if os() == "windows" { "/" + config } else { "" }
+bindir := builddir + "/cstream" + cfgdir
 
 # Default target
 default: test
 
 # Configure the CMake build tree
 configure:
-    cmake -S . -B {{builddir}} \
-      -DCMAKE_TOOLCHAIN_FILE={{vcpkg}}/scripts/buildsystems/vcpkg.cmake \
-      -DVCPKG_TARGET_TRIPLET={{triplet}} \
-      -DMatlab_ROOT_DIR="{{oldestroot}}"
+    cmake -S . -B {{builddir}} {{curl}} -DMatlab_ROOT_DIR="{{oldestroot}}"
 
 # Build the library, demo and tests
 build: configure
@@ -54,7 +67,7 @@ test: build
 relay:
     cd nmproxy && go build -trimpath \
       -ldflags "-X main.version=$(tr -d '[:space:]' < ../simulink/VERSION)-dev" \
-      -o ../{{builddir}}/nmproxy{{ if os() == "windows" { ".exe" } else { "" } }} ./cmd/nmproxy
+      -o ../{{builddir}}/nmproxy{{exe}} ./cmd/nmproxy
 
 # Vet and test the relay
 relay-test:
@@ -66,7 +79,7 @@ relay-test:
 #
 # Stream synthetic data to a real dataset — needs NOMINAL_TOKEN
 demo rid base="": build
-    {{builddir}}/cstream/{{config}}/nmstream-demo.exe {{rid}} {{base}}
+    {{bindir}}/nmstream-demo{{exe}} {{rid}} {{base}}
 
 # Guards against protocol drift: captures what the Rust client actually puts on the
 # wire, and test_encode is pinned byte-for-byte against it. Run after upgrading
@@ -84,7 +97,7 @@ fixtures:
 #
 # Print the golden host-to-proxy frames for frames.txt
 frames: build
-    {{builddir}}/cstream/{{config}}/test_frame.exe --fixtures
+    {{bindir}}/test_frame{{exe}} --fixtures
 
 # Regenerate the Simulink library holding the masked sink block
 library: build

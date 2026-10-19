@@ -61,6 +61,7 @@ build/
 *.mexw64
 *.mexa64
 *.mexmaci64
+*.mexmaca64
 slprj/
 *.slxc
 

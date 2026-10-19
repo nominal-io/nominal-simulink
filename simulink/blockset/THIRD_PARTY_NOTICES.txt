@@ -5,7 +5,8 @@ The compiled S-function (mex/nominal_sink_sfun.*) includes or uses the software 
 
 On Windows, libcurl and zlib are linked statically into nominal_sink_sfun.mexw64, and
 TLS is provided by the operating system (Schannel). On Linux, nominal_sink_sfun.mexa64
-links libcurl dynamically and, inside MATLAB, uses the copy MATLAB itself ships.
+links libcurl dynamically and, inside MATLAB, uses the copy MATLAB itself ships. On
+macOS, the S-function links the libcurl that comes with macOS.
 
 
 libcurl

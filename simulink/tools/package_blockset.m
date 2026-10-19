@@ -11,7 +11,8 @@ function file = package_blockset()
 %
 %   The platforms the toolbox claims follow the MEX files present: a package built on a
 %   machine with only the Windows MEX says so, rather than claiming Linux and failing
-%   there at run time. A release is packaged in CI, where both are built.
+%   there at run time. A release is packaged in CI, which builds the Windows and Linux
+%   ones. The oldest release the toolbox claims is the one that saved the library.
 
     % Fixed for the life of the blockset. It is how an install recognises an earlier
     % version of itself to replace, so changing it would leave users with two copies.
@@ -39,12 +40,18 @@ function file = package_blockset()
 
     hasWin   = isfile(fullfile(root, 'mex', 'nominal_sink_sfun.mexw64'));
     hasLinux = isfile(fullfile(root, 'mex', 'nominal_sink_sfun.mexa64'));
-    if ~hasWin && ~hasLinux
+    hasMac   = isfile(fullfile(root, 'mex', 'nominal_sink_sfun.mexmaca64')) || ...
+               isfile(fullfile(root, 'mex', 'nominal_sink_sfun.mexmaci64'));
+    if ~hasWin && ~hasLinux && ~hasMac
         error('nominal:package', 'no compiled S-function in %s. Run `just build` first.', ...
               fullfile(root, 'mex'));
     end
 
-    writeContents(fullfile(root, 'script', 'Contents.m'), version);
+    % R2021b, except on a Mac, where the library is built in R2023b.
+    info    = Simulink.MDLInfo(required{1, 1});
+    release = info.ReleaseName;
+
+    writeContents(fullfile(root, 'script', 'Contents.m'), version, release);
 
     opts = matlab.addons.toolbox.ToolboxOptions(root, identifier);
     opts.ToolboxName    = 'Nominal Blockset';
@@ -72,7 +79,7 @@ function file = package_blockset()
 
     opts.ToolboxMatlabPath = fullfile(root, {'library', 'script', 'mex', 'doc'});
     opts.ToolboxGettingStartedGuide = fullfile(root, 'GettingStarted.m');
-    opts.MinimumMatlabRelease = 'R2021b';
+    opts.MinimumMatlabRelease = release;
 
     % Field names have changed across releases (Maci64 became Mac), so clear whatever
     % exists rather than naming each.
@@ -82,6 +89,11 @@ function file = package_blockset()
     end
     platforms.Win64   = hasWin;
     platforms.Glnxa64 = hasLinux;
+    if isfield(platforms, 'Mac')
+        platforms.Mac = hasMac;
+    else
+        platforms.Maci64 = hasMac;
+    end
     opts.SupportedPlatforms = platforms;
 
     if ~isfolder(outDir)
@@ -92,17 +104,18 @@ function file = package_blockset()
 
     matlab.addons.toolbox.packageToolbox(opts);
 
-    fprintf('wrote %s (%s)\n', file, strjoin([ ...
-        repmat({'Win64'}, 1, hasWin), repmat({'Linux'}, 1, hasLinux)], ', '));
+    fprintf('wrote %s (%s, %s and later)\n', file, strjoin([ ...
+        repmat({'Win64'}, 1, hasWin), repmat({'Linux'}, 1, hasLinux), ...
+        repmat({'macOS'}, 1, hasMac)], ', '), release);
 end
 
-function writeContents(file, version)
+function writeContents(file, version, release)
 % Contents.m is what `ver` reads to list an installed toolbox.
     fid = fopen(file, 'w');
     if fid < 0
         error('nominal:package', 'cannot write %s', file);
     end
     closer = onCleanup(@() fclose(fid));
-    fprintf(fid, '%% Nominal Blockset\n%% Version %s (R2021b) %s\n', ...
-            version, char(datetime('today', 'Format', 'dd-MMM-yyyy')));
+    fprintf(fid, '%% Nominal Blockset\n%% Version %s (%s) %s\n', ...
+            version, release, char(datetime('today', 'Format', 'dd-MMM-yyyy')));
 end

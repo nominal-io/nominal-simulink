@@ -29,6 +29,11 @@ endif()
 # On QNX and Antelope this finds the platform's curl instead, which is the whole reason
 # the C design is tractable there -- curl.se publishes official QNX builds and OpenSSL
 # ships with Neutrino.
+#
+# On Linux and macOS it finds the system's libcurl, linked dynamically. On Linux, MATLAB
+# loads its own libcurl, and the MEX uses that one. On macOS, the MEX keeps the libcurl
+# that comes with macOS, because a macOS binary records which library each symbol comes
+# from.
 find_package(CURL REQUIRED)
 target_link_libraries(nominalstream PUBLIC CURL::libcurl)
 

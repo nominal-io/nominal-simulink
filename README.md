@@ -55,14 +55,18 @@ has official curl builds, so the write path is in C.
 
 ## Building and testing
 
-You need CMake, vcpkg with `curl:x64-windows-static-md`, just, and two MATLAB releases with
-Simulink and a C compiler set up (`mex -setup C`). The oldest release the blockset supports,
-R2021b, builds everything that ships, because a library opens only in the release that saved it
-or a later one. R2026a builds the toolbox. If either isn't in its default folder, set
-`MATLAB_OLDEST` or `MATLABROOT` to its install folder, with forward slashes. `nmproxy` needs
-Go 1.25, `just fixtures` needs Rust, and the docs need uv.
+You need CMake, just, and two MATLAB releases with Simulink and a C compiler set up
+(`mex -setup C`). For libcurl, Windows needs vcpkg with `curl:x64-windows-static-md`, Linux
+needs the libcurl development package, and macOS needs only the Xcode Command Line Tools.
 
-```powershell
+The oldest release the blockset supports, R2021b, builds everything that ships, because a
+library opens only in the release that saved it or a later one. R2026a builds the toolbox. On a
+Mac with Apple silicon, R2023b takes the place of R2021b, because it is the first release that
+runs natively there. If either release isn't in its default folder, set `MATLAB_OLDEST` or
+`MATLABROOT` to its install folder, with forward slashes. `nmproxy` needs Go 1.25,
+`just fixtures` needs Rust, and the docs need uv.
+
+```shell
 just build         # the C library, the S-function and the demo
 just test          # the C library's tests
 just sim-test      # the block's tests, in both MATLAB releases
@@ -81,7 +85,8 @@ without installing it, run `simulink/nominal_setup.m`.
 
 `simulink/VERSION` sets the version. `.github/workflows/blockset.yml` builds the Linux
 S-function, tests the installed toolbox on both platforms and both releases, and attaches the
-toolbox to a GitHub release for each `v*` tag.
+toolbox to a GitHub release for each `v*` tag. It also builds the S-function on macOS, but the
+toolbox doesn't include that build.
 
 ## Debugging the block
 
