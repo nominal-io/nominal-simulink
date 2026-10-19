@@ -76,12 +76,12 @@ relay-test:
     cd nmproxy && go vet ./... && go test ./...
 
 # Usage:
-#   just demo ri.catalog....
-#   just demo ri.catalog.... https://api.example.nominal.io/api
+#   just demo ri.catalog....            with the profile named default
+#   just demo ri.catalog.... staging    with another profile
 #
-# Stream synthetic data to a real dataset — needs NOMINAL_TOKEN
-demo rid base="": build
-    {{bindir}}/nmstream-demo{{exe}} {{rid}} {{base}}
+# Stream synthetic data to a real dataset, with a profile from Nominal's config file
+demo rid profile="": build
+    {{bindir}}/nmstream-demo{{exe}} {{rid}} {{profile}}
 
 # Guards against protocol drift: captures what the Rust client actually puts on the
 # wire, and test_encode is pinned byte-for-byte against it. Run after upgrading

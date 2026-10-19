@@ -4,8 +4,10 @@
  * Exercises the C client end to end without Simulink: the ring, the sender thread, and
  * either the HTTPS POST to Nominal (direct) or frames to a relay (proxy, -p).
  *
- *   set NOMINAL_TOKEN=...      (a Nominal API key, direct mode only)
- *   nmstream-demo [-p host:port] <dataset-rid> [base-url]
+ *   nmstream-demo [-p host:port] <dataset-rid> [profile]
+ *
+ * Direct mode reads the API key and URL from a profile in Nominal's config file, the
+ * one named `default` unless another is given.
  *
  * Writes 1000 rows across three channels (3000 points), so point it at something
  * disposable.
@@ -28,9 +30,9 @@ int main(int argc, char **argv)
         "cdemo.sine", "cdemo.cosine", "cdemo.ramp"
     };
 
-    const char *token = getenv("NOMINAL_TOKEN");
-    const char *rid   = NULL;
-    const char *base  = "https://api.gov.nominal.io/api";
+    const char *rid          = NULL;
+    const char *profile_name = "default";
+    static nm_profile profile;
 
     /* -p host:port switches to proxy mode, where this process sends datagrams and a
      * relay does the protobuf, TLS and HTTP. No API key is needed: the dataset RID
@@ -58,7 +60,7 @@ int main(int argc, char **argv)
         rid = argv[argi];
     }
     if (argc > argi + 1) {
-        base = argv[argi + 1];
+        profile_name = argv[argi + 1];
     }
 
     nm_config  cfg;
@@ -70,16 +72,22 @@ int main(int argc, char **argv)
 
     if (rid == NULL) {
         fprintf(stderr,
-                "usage: nmstream-demo [-p host:port] <dataset-rid> [base-url]\n"
-                "  no -p   send directly to Nominal over HTTPS (set NOMINAL_TOKEN to an "
-                "API key)\n"
+                "usage: nmstream-demo [-p host:port] <dataset-rid> [profile]\n"
+                "  no -p   send directly to Nominal over HTTPS, with the API key and URL\n"
+                "          from a profile in Nominal's config file ('default' if not given)\n"
                 "  -p      send to a relay instead (no API key needed)\n");
         return 2;
     }
-    if (proxy_host == NULL && (token == NULL || token[0] == '\0')) {
-        fprintf(stderr, "direct mode needs a Nominal API key. Set NOMINAL_TOKEN, or use "
-                        "-p to send through a relay.\n");
-        return 2;
+    if (proxy_host == NULL) {
+        char path[1024];
+
+        if (nm_profile_read(NULL, profile_name, &profile, path, sizeof path)
+                != NM_PROFILE_OK) {
+            fprintf(stderr, "could not read profile '%s' from %s. Direct mode needs a "
+                            "profile with a token and base_url, or use -p to send "
+                            "through a relay.\n", profile_name, path);
+            return 2;
+        }
     }
 
     memset(&cfg, 0, sizeof cfg);
@@ -96,9 +104,9 @@ int main(int argc, char **argv)
         printf("mode          = proxy -> %s:%u\n", proxy_host, (unsigned)proxy_port);
     } else {
         cfg.mode     = NM_MODE_DIRECT;
-        cfg.base_url = base;
-        cfg.token    = token;
-        printf("mode          = direct -> %s\n", base);
+        cfg.base_url = profile.base_url;
+        cfg.token    = profile.token;
+        printf("mode          = direct -> %s\n", profile.base_url);
     }
 
     /* NULL means the platform's own trust store (on Windows, Schannel and the Windows

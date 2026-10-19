@@ -71,8 +71,8 @@ every setting.
 In the block's dialog, set **Mode** to **Via proxy**. Set **Proxy host** to the relay computer's
 name or IP address, in single quotes (`'127.0.0.1'` when it runs on the same computer), and
 **Proxy port** to the port `nmproxy` listens on (`15400` unless you changed it). **Dataset RID**
-and the channel names stay as they were. The block doesn't use `NOMINAL_TOKEN` in proxy mode, and
-the dialog greys out **API base URL**.
+and the channel names stay as they were. The block reads no profile in proxy mode, and the dialog
+greys out **Profile** and **Profile file**.
 
 Run the model. `nmproxy` logs `configuration registered` with the dataset and the number of
 channels, then `session started`.

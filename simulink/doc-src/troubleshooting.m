@@ -5,9 +5,8 @@
 % The block's errors start with |Nominal Stream Sink:| and say what to change. Two come
 % up on a first run:
 %
-% * |NOMINAL_TOKEN is not set| means MATLAB has no API key. Run
-%   |setenv('NOMINAL_TOKEN', '<API key>')| in the same MATLAB session, then run the model
-%   again.
+% * A message about the Nominal config file or a profile names the file and what it is
+%   missing. API keys setup in the Nominal docs shows what the file holds.
 % * A message that a field |must be text in quotes|, or Simulink reporting that it can't
 %   evaluate a parameter, means a text value is missing its quotes.
 
@@ -26,11 +25,11 @@
 %   less often, or switch to <streaming_via_proxy.html proxy mode>. For a simulation that
 %   runs faster than real time, a buffer that holds every row of the run also works.
 % * |requests failed, the last with HTTP status| followed by a number: Nominal refused
-%   the rows, and the |Last error| gives its reason. Check that *API base URL* is the API
-%   URL of the instance the dataset belongs to, that *Dataset RID* is right, and that the
-%   API key is current.
-% * |requests failed, the last with no response|: the computer couldn't reach *API base
-%   URL*. Check the URL and the network.
+%   the rows, and the |Last error| gives its reason. Check that the profile's |base_url|
+%   is the API URL of the instance the dataset belongs to, that *Dataset RID* is right,
+%   and that the profile's |token| is a current API key.
+% * |requests failed, the last with no response|: the computer couldn't reach the
+%   profile's |base_url|. Check the URL and the network.
 % * |packets could not be sent to the relay|: check that |nmproxy| is running at *Proxy
 %   host* and *Proxy port*.
 

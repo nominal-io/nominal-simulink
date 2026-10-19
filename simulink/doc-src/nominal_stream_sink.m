@@ -15,7 +15,7 @@
 % *Mode* chooses how the data leaves the model:
 %
 % * *Direct to Nominal* sends it over HTTPS from the computer running the model, using
-%   the API key in the |NOMINAL_TOKEN| environment variable.
+%   the API key and URL in a profile in Nominal's config file.
 % * *Via proxy* sends it over UDP to |nmproxy|, a relay that holds the API key and
 %   writes to Nominal. See <streaming_via_proxy.html Streaming Through a Relay>.
 %
@@ -45,8 +45,8 @@
 %% Parameters
 % Text parameters take a MATLAB expression, so enter text in single or double quotes, or
 % the name of a variable that holds the text. No parameter can change while the model
-% runs. The dialog greys out *API base URL* in proxy mode, and *Proxy host* and *Proxy
-% port* in direct mode.
+% runs. The dialog greys out *Profile* and *Profile file* in proxy mode, and *Proxy host*
+% and *Proxy port* in direct mode.
 %
 % To set a parameter from code, use its programmatic name. A text value keeps its quotes
 % inside the string:
@@ -110,13 +110,20 @@
 %
 % Programmatic name: |mode|. Values: |'Direct to Nominal'| (default), |'Via proxy'|.
 %
-% *API base URL* — the Nominal instance to write to
+% *Profile* — where the API key and URL come from
 %
-% Direct mode only, and required there. The REST API base URL of the Nominal instance
-% the dataset belongs to: the *API URL* on your organization's *API keys* page in
-% Nominal. The default is the standard cloud instance.
+% Direct mode only. The profile in Nominal's config file to read the API key and the
+% instance's REST API base URL from, as its |token| and |base_url|. It is the same file
+% Nominal's other clients read.
 %
-% Programmatic name: |baseUrl|. Default: |'https://api.gov.nominal.io/api'|.
+% Programmatic name: |profile|. Default: |'default'|.
+%
+% *Profile file* — the config file, when it is somewhere else
+%
+% Direct mode only. Empty reads the standard location: |~/.config/nominal/config.yml|,
+% or |%USERPROFILE%\.config\nominal\config.yml| on Windows.
+%
+% Programmatic name: |profileFile|. Default: |''|.
 %
 % *Proxy host* — where the relay runs
 %
@@ -167,15 +174,8 @@
 %
 % Programmatic name: |showDropped|. Values: |'off'| (default), |'on'|.
 
-%% Environment Variables
-% The block reads these when a run starts. Proxy mode uses neither.
-%
-% *NOMINAL_TOKEN* — your Nominal API key. Required in direct mode. Set it before
-% starting MATLAB, or in MATLAB before you run the model:
-%
-%   setenv('NOMINAL_TOKEN', '<API key>')
-%
-% The key is read from the environment so that it is never saved in the model file.
+%% Environment Variable
+% The block reads this when a run starts, in direct mode only.
 %
 % *NOMINAL_CA_BUNDLE* — the path to a PEM file of CA certificates to verify Nominal's
 % HTTPS certificate with. Set it when your Nominal instance or your network uses

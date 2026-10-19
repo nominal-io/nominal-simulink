@@ -84,7 +84,7 @@ function make_library()
         'Parameters', [ ...
             '''engine.rpm, engine.egt, engine.psi'', ' ...   % channels
             '''''' ', ' ...                                  % datasetRid
-            '''https://api.gov.nominal.io/api'', ' ...       % baseUrl
+            '''default'', ' ...                              % profile
             '0.001, ' ...                                    % sampleTime
             '4096, ' ...                                     % capacityRows
             '1, ' ...                                        % timeMode
@@ -93,13 +93,14 @@ function make_library()
             '''127.0.0.1'', ' ...                            % proxyHost
             '15400, ' ...                                    % proxyPort
             ''''', ' ...                                     % tags
-            '''auto''']);                                    % executionId
+            '''auto'', ' ...                                 % executionId
+            '''''']);                                        % profileFile
 
     % --- mask -------------------------------------------------------------------
     %
-    % Note there is deliberately no token parameter. Mask values are saved inside the
-    % .slx, so a token entered here would be a credential committed to a model file.
-    % The block reads NOMINAL_TOKEN from the environment instead.
+    % Note there is deliberately no API key parameter. Mask values are saved inside the
+    % .slx, so a key entered here would be a credential committed to a model file. The
+    % block names a profile in Nominal's config file instead, and reads the key from it.
     m = Simulink.Mask.create(blockPath);
 
     % The type titles the dialog, and is what nominal_help keys a block's page on.
@@ -116,8 +117,9 @@ function make_library()
         'Each element is one channel, in the order of Channel names.' newline newline ...
         'If sending falls behind, the block drops rows rather than slowing the model, ' ...
         'and warns at the end of the run with how many.' newline newline ...
-        'In direct mode the block reads your API key from the NOMINAL_TOKEN ' ...
-        'environment variable, so the key is never saved in the model.'];
+        'In direct mode the block reads your API key and your instance''s URL from a ' ...
+        'profile in Nominal''s config file, the one Nominal''s other clients use, so the ' ...
+        'key is never saved in the model.'];
 
     m.addParameter('Type', 'edit', 'Name', 'channels', ...
         'Prompt', 'Channel names (comma-separated)', ...
@@ -156,9 +158,14 @@ function make_library()
         'TypeOptions', {'Direct to Nominal', 'Via proxy'}, ...
         'Value', 'Direct to Nominal', 'Evaluate', 'on');
 
-    m.addParameter('Type', 'edit', 'Name', 'baseUrl', ...
-        'Prompt', 'API base URL', ...
-        'Value', '''https://api.gov.nominal.io/api''');
+    % Direct mode's URL and API key come from this profile. Empty Profile file means the
+    % standard location, ~/.config/nominal/config.yml. A real-time target, which has no
+    % home folder, would point it at a file deployed with the application.
+    m.addParameter('Type', 'edit', 'Name', 'profile', ...
+        'Prompt', 'Profile', 'Value', '''default''');
+
+    m.addParameter('Type', 'edit', 'Name', 'profileFile', ...
+        'Prompt', 'Profile file', 'Value', '''''');
 
     m.addParameter('Type', 'edit', 'Name', 'proxyHost', ...
         'Prompt', 'Proxy host', 'Value', '''127.0.0.1''');
@@ -197,7 +204,7 @@ function make_library()
     % --- dialog logic ------------------------------------------------------------
     %
     % Grey out whichever fields the chosen mode ignores, so the dialog cannot suggest
-    % that a proxy host matters in direct mode or that an API URL matters in proxy mode.
+    % that a proxy host matters in direct mode or that a profile matters in proxy mode.
     % A visible-but-inert field is a standing invitation to fill it in and wonder why
     % nothing changed.
     %
@@ -235,9 +242,10 @@ function make_library()
     % the mistake from the S-function's own check.
     set_param(blockPath, 'Parameters', ...
         ['convertStringsToChars(channels), convertStringsToChars(datasetRid), ' ...
-         'convertStringsToChars(baseUrl), sampleTime, capacityRows, timeMode, ' ...
+         'convertStringsToChars(profile), sampleTime, capacityRows, timeMode, ' ...
          'showDropped, mode, convertStringsToChars(proxyHost), proxyPort, ' ...
-         'nominal_sink_tags(tags), nominal_sink_execid(executionId, tags)']);
+         'nominal_sink_tags(tags), nominal_sink_execid(executionId, tags), ' ...
+         'convertStringsToChars(profileFile)']);
 
 
     % Apply it once now, so a freshly dragged block starts with the right fields greyed

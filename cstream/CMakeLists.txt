@@ -8,6 +8,8 @@ add_library(nominalstream
   # Proxy mode: the frame codec and the UDP transport.
   src/nm_frame.c
   src/nm_udp.c
+  # Direct mode's URL and API key, from Nominal's config file.
+  src/nm_profile.c
 )
 
 if(WIN32)
@@ -80,6 +82,10 @@ if(BUILD_TESTING)
   target_link_libraries(test_frame PRIVATE nominalstream)
   target_include_directories(test_frame PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
   add_test(NAME frame COMMAND test_frame)
+
+  add_executable(test_profile tests/test_profile.c)
+  target_link_libraries(test_profile PRIVATE nominalstream)
+  add_test(NAME profile COMMAND test_profile)
 
   add_executable(test_http tests/test_http.c)
   target_link_libraries(test_http PRIVATE nominalstream)

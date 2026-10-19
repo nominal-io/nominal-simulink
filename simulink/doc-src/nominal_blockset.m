@@ -16,23 +16,21 @@
 % </html>
 
 %% Getting Started
-% You need an existing dataset in Nominal and its RID, an API key, and your Nominal
-% instance's API URL. The API key and the API URL are both on your organization's *API
-% keys* page in Nominal.
+% You need an existing dataset in Nominal and its RID, and a profile in Nominal's config
+% file holding your API key and your instance's API URL. A computer already set up for
+% another Nominal client, such as the Python client, has one. Otherwise follow API keys
+% setup in the Nominal docs.
 %
 % # Open the Library Browser, expand *Nominal*, and drag *Nominal Stream Sink* into your
 %   model. Typing |Nominal| on the canvas also finds it.
 % # Wire the signals you want to record into a Mux, and the Mux into the block.
 % # Double-click the block and click *Detect from connected signal* to fill in the
 %   channel names.
-% # Enter the dataset's RID in *Dataset RID*, and your instance's API URL in *API base
-%   URL*, both in quotes.
-% # Set your API key, then run the model:
+% # Enter the dataset's RID in *Dataset RID*, in quotes.
+% # Run the model. The block reads the profile named |default|.
 %
-%   setenv('NOMINAL_TOKEN', '<API key>')
-%
-% The block reads the API key from the environment so that it is never saved in the
-% model file.
+% The block reads the API key from the profile so that it is never saved in the model
+% file.
 %
 % <matlab:open_system(fullfile(nominal_root,'examples','nominal_stream_example.slx')) Open
 % the example model> to see the block in a model without setting anything up. It sends

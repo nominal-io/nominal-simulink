@@ -17,11 +17,11 @@
  * hardware-in-the-loop rig, where stalling the model is far worse than dropping samples.
  * nm_stats() reports what was lost.
  *
- * Scope is deliberately narrow: this writes points to an existing dataset and does
- * nothing else. Creating datasets, resolving assets, and every other catalog operation
- * belongs to the Rust client in the nominal-c repository. A direct stream needs an API
- * key, a dataset RID and a base URL. A proxy stream needs a dataset RID and the relay's
- * address. Opening either makes no API call.
+ * Scope is deliberately narrow: this writes points to an existing dataset, and reads the
+ * profile that says where and with which API key. Creating datasets, resolving assets,
+ * and every other catalog operation belongs to the Rust client in the nominal-c
+ * repository. A direct stream needs an API key, a dataset RID and a base URL. A proxy
+ * stream needs a dataset RID and the relay's address. Opening either makes no API call.
  */
 
 #ifndef NOMINAL_STREAM_H
@@ -211,6 +211,39 @@ void nm_close_stats(nm_stream *s, nm_stats_t *out);
 
 /* Human-readable text for a status code. Returns a static string; never NULL. */
 const char *nm_strerror(nm_status status);
+
+/*
+ * A connection profile from Nominal's config file, the file the Python client, the nom
+ * CLI and nominal-matlab also read, so a computer set up for one is set up for all.
+ * Every field is NUL-terminated. workspace_rid is empty when the profile sets none.
+ */
+typedef struct {
+    char base_url[512];
+    char token[4096];
+    char workspace_rid[256];
+} nm_profile;
+
+typedef enum {
+    NM_PROFILE_OK = 0,
+    NM_PROFILE_NO_FILE,       /* no file at the path, or it can't be opened */
+    NM_PROFILE_NOT_FOUND,     /* the file has no profile by that name */
+    NM_PROFILE_NO_TOKEN,      /* the profile has no token */
+    NM_PROFILE_NO_BASE_URL,   /* the profile has no base_url */
+    NM_PROFILE_TOO_LONG       /* a value is longer than nm_profile holds */
+} nm_profile_status;
+
+/*
+ * Read the profile `name` from the config file at `path`. NULL or "" reads the default
+ * file: ~/.config/nominal/config.yml, or %USERPROFILE%\.config\nominal\config.yml on
+ * Windows. The path read is written to path_used, if it is non-NULL, so a caller can
+ * name it in a message. Makes no network call.
+ *
+ * Reads the two-level shape the file has, `profiles:` then a name then its keys, and
+ * nothing more of YAML: values may be quoted, `null` and `~` mean unset, and lines
+ * starting with # are comments.
+ */
+nm_profile_status nm_profile_read(const char *path, const char *name, nm_profile *out,
+                                  char *path_used, size_t path_used_len);
 
 /*
  * Current wall-clock time as nanoseconds since the Unix epoch.

@@ -20,9 +20,10 @@
  * Instead, nominal_sink_autonames, behind the mask's Detect button, fills in the names
  * at edit time, where MATLAB can inspect the bus properly.
  *
- * The token is read from the NOMINAL_TOKEN environment variable and is deliberately not
- * a block parameter: parameters are saved inside the .slx, and a credential committed
- * to a model file is a credential leaked.
+ * In direct mode the API key and URL come from a profile in Nominal's config file, the
+ * one Nominal's other clients read, and the block names only the profile. The key is
+ * deliberately not a block parameter: parameters are saved inside the .slx, and a
+ * credential committed to a model file is a credential leaked.
  */
 
 #define S_FUNCTION_NAME  nominal_sink_sfun
@@ -55,7 +56,7 @@
 enum {
     P_CHANNELS = 0,   /* comma-separated channel names */
     P_DATASET,        /* dataset RID */
-    P_BASE_URL,       /* API root */
+    P_PROFILE,        /* profile name in Nominal's config file */
     P_SAMPLE_TIME,    /* seconds between writes (decimation, not the solver step) */
     P_CAPACITY,       /* ring capacity in rows */
     P_TIME_MODE,      /* one of the TIME_MODE_ values below */
@@ -65,6 +66,7 @@ enum {
     P_PROXY_PORT,
     P_TAGS,           /* key US value RS key US value ..., from nominal_sink_tags */
     P_EXEC_ID,        /* "auto", an ID, or empty for none, from nominal_sink_execid */
+    P_PROFILE_FILE,   /* the config file's path, or empty for the default one */
     P_COUNT
 };
 
@@ -426,11 +428,12 @@ static void mdlStart(SimStruct *S)
     sink_state *st;
     nm_config   cfg;
     nm_status   status = NM_OK;
-    char       *csv = NULL, *rid = NULL, *url = NULL;
+    char       *csv = NULL, *rid = NULL;
+    char       *profile_name = NULL, *profile_file = NULL;
+    nm_profile *profile = NULL;
     char       *storage = NULL;
     char      **names = NULL;
     size_t      count = 0;
-    const char *token;
     char       *proxy_host = NULL;
     char       *tag_text = NULL, *exec_id = NULL;
     nm_tag     *tags = NULL;
@@ -440,32 +443,22 @@ static void mdlStart(SimStruct *S)
 
     mode = (int)mxGetScalar(ssGetSFcnParam(S, P_MODE));
 
-    /* Only direct mode needs a credential. In proxy mode the dataset RID travels in
-     * the frames and the token lives on the relay, so this machine holds nothing worth
-     * stealing — demanding one here would be asking for a secret we will not use. */
-    token = getenv("NOMINAL_TOKEN");
-    if (mode != MODE_PROXY && (token == NULL || token[0] == '\0')) {
-        ssSetErrorStatus(S, "Nominal Stream Sink: NOMINAL_TOKEN is not set. Set it to "
-                            "your Nominal API key, for example with "
-                            "setenv('NOMINAL_TOKEN', '<API key>'), then run the model "
-                            "again.");
-        return;
-    }
-
     if (!require_text(S, P_DATASET, "Dataset RID", "'ri.catalog.<...>'")) {
         return;
     }
     if (mode == MODE_PROXY
             ? !require_text(S, P_PROXY_HOST, "Proxy host", "'127.0.0.1'")
-            : !require_text(S, P_BASE_URL, "API base URL", "'https://api.gov.nominal.io/api'")) {
+            : !require_text(S, P_PROFILE, "Profile", "'default'") ||
+              !require_text(S, P_PROFILE_FILE, "Profile file", "'<path to config.yml>'")) {
         return;
     }
 
-    csv        = param_string(S, P_CHANNELS);
-    rid        = param_string(S, P_DATASET);
-    url        = param_string(S, P_BASE_URL);
-    proxy_host = param_string(S, P_PROXY_HOST);
-    count      = split_names(csv, &storage, &names);
+    csv          = param_string(S, P_CHANNELS);
+    rid          = param_string(S, P_DATASET);
+    profile_name = param_string(S, P_PROFILE);
+    profile_file = param_string(S, P_PROFILE_FILE);
+    proxy_host   = param_string(S, P_PROXY_HOST);
+    count        = split_names(csv, &storage, &names);
 
     if (count == 0) {
         ssSetErrorStatus(S, MSG_NO_CHANNELS);
@@ -535,17 +528,57 @@ static void mdlStart(SimStruct *S)
         cfg.proxy_host = proxy_host;
         cfg.proxy_port = (uint16_t)port;
     } else {
-        /* No default to fall back on: a blank URL is a mistake, and quietly
-         * substituting one instance's URL would write to the wrong place. */
-        if (url == NULL || url[0] == '\0') {
-            ssSetErrorStatus(S, "Nominal Stream Sink: API base URL is empty. Enter the "
-                                "API URL of the Nominal instance the dataset is in.");
+        /* Only direct mode needs a credential. In proxy mode the dataset RID travels in
+         * the frames and the API key lives on the relay, so this computer holds nothing
+         * worth stealing. */
+        static char       msg[1536];
+        char              path[1024];
+        nm_profile_status pst;
+
+        if (profile_name == NULL || profile_name[0] == '\0') {
+            ssSetErrorStatus(S, "Nominal Stream Sink: Profile is empty. Enter the name of a "
+                                "profile in your Nominal config file, such as 'default'.");
+            free_state(st);
+            goto cleanup;
+        }
+        profile = malloc(sizeof *profile);
+        if (profile == NULL) {
+            ssSetErrorStatus(S, "Nominal Stream Sink: out of memory.");
+            free_state(st);
+            goto cleanup;
+        }
+        pst = nm_profile_read(profile_file, profile_name, profile, path, sizeof path);
+        if (pst != NM_PROFILE_OK) {
+            if (pst == NM_PROFILE_NO_FILE) {
+                snprintf(msg, sizeof msg,
+                         "Nominal Stream Sink: could not read the Nominal config file %s. "
+                         "Create it with a profile holding your API key and base URL, or "
+                         "set Profile file to where yours is.", path);
+            } else if (pst == NM_PROFILE_NOT_FOUND) {
+                snprintf(msg, sizeof msg,
+                         "Nominal Stream Sink: the Nominal config file %s has no profile "
+                         "named '%s'. Check Profile, or add the profile to the file.",
+                         path, profile_name);
+            } else if (pst == NM_PROFILE_NO_TOKEN) {
+                snprintf(msg, sizeof msg,
+                         "Nominal Stream Sink: profile '%s' in %s has no token. Add your "
+                         "API key to it as token.", profile_name, path);
+            } else if (pst == NM_PROFILE_NO_BASE_URL) {
+                snprintf(msg, sizeof msg,
+                         "Nominal Stream Sink: profile '%s' in %s has no base_url. Add your "
+                         "instance's API URL to it as base_url.", profile_name, path);
+            } else {
+                snprintf(msg, sizeof msg,
+                         "Nominal Stream Sink: profile '%s' in %s has a value too long to "
+                         "read.", profile_name, path);
+            }
+            ssSetErrorStatus(S, msg);
             free_state(st);
             goto cleanup;
         }
         cfg.mode     = NM_MODE_DIRECT;
-        cfg.base_url = url;
-        cfg.token    = token;
+        cfg.base_url = profile->base_url;
+        cfg.token    = profile->token;
     }
     cfg.capacity_rows = (size_t)mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
     cfg.max_batch_delay_ms = 100;
@@ -588,7 +621,14 @@ static void mdlStart(SimStruct *S)
 cleanup:
     free(csv);
     free(rid);
-    free(url);
+    free(profile_name);
+    free(profile_file);
+    if (profile != NULL) {
+        /* nm_open has copied the key, so this copy can go, and not linger in freed
+         * memory. */
+        memset(profile, 0, sizeof *profile);
+        free(profile);
+    }
     free(proxy_host);
     free(tag_text);
     free(exec_id);

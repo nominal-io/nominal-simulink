@@ -18,18 +18,31 @@ dialog. The rest appear when the run starts.
 `<field> must be text in quotes, for example <example>.`
 : The field holds something other than text, such as a number. Put the value in single or
   double quotes. The block checks **Channel names (comma-separated)** when you apply the dialog,
-  and **Dataset RID**, **Proxy host** and **API base URL** when the run starts.
-
-`NOMINAL_TOKEN is not set. Set it to your Nominal API key, for example with setenv('NOMINAL_TOKEN', '<API key>'), then run the model again.`
-: Direct mode needs an API key. `setenv` lasts until MATLAB closes. To keep the key across
-  restarts, set `NOMINAL_TOKEN` in your operating system's environment instead.
+  and **Dataset RID**, **Proxy host**, **Profile** and **Profile file** when the run starts.
 
 `Dataset RID is empty. Enter the RID of the dataset to write to, in quotes.`
 : [Finding a dataset's RID](site:/quickstart/quickstart/quick/quick-dataset-rid/) shows where
   to copy it.
 
-`API base URL is empty. Enter the API URL of the Nominal instance the dataset is in.`
-: Direct mode needs the URL. It is the **API URL** on your organization's **API keys** page.
+`Profile is empty. Enter the name of a profile in your Nominal config file, such as 'default'.`
+: Direct mode reads the API key and URL from a profile, and **Profile** names it.
+
+`could not read the Nominal config file <path>. Create it with a profile holding your API key and base URL, or set Profile file to where yours is.`
+: There is no config file at `<path>`, or it can't be opened.
+  [API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows how to create it.
+
+`the Nominal config file <path> has no profile named '<profile>'. Check Profile, or add the profile to the file.`
+: The file has profiles, but not that one. Profile names are case-sensitive.
+
+`profile '<profile>' in <path> has no token. Add your API key to it as token.`
+: The profile has no `token`, or it is `null`.
+
+`profile '<profile>' in <path> has no base_url. Add your instance's API URL to it as base_url.`
+: The profile has no `base_url`. It is the **API URL** on your organization's **API keys**
+  page.
+
+`profile '<profile>' in <path> has a value too long to read.`
+: A `base_url` is over 511 characters, a `token` over 4095, or a `workspace_rid` over 255.
 
 `in proxy mode, Proxy host can't be empty and Proxy port must be from 1 to 65535.`
 : Set both to the address `nmproxy` listens on.
@@ -102,16 +115,17 @@ recent failure. What to do depends on the cause.
   [Timing and dropped rows](../guides/timing.md#when-sending-falls-behind).
 
 `<n> requests failed, the last with HTTP status <status>`
-: Nominal refused the rows, and the `Last error` has its error message. Check that
-  **API base URL** is the API URL of the instance the dataset belongs to, that **Dataset RID**
-  is right, and that `NOMINAL_TOKEN` holds a current API key for that instance.
+: Nominal refused the rows, and the `Last error` has its error message. Check that the
+  profile's `base_url` is the API URL of the instance the dataset belongs to, that
+  **Dataset RID** is right, and that the profile's `token` is a current API key for that
+  instance.
 
 `<n> requests failed, the last with no response`
-: The computer couldn't reach **API base URL**, and the `Last error` says why. Check the URL
-  and the network. When the `Last error` ends with
+: The computer couldn't reach the profile's `base_url`, and the `Last error` says why. Check the
+  URL and the network. When the `Last error` ends with
   `. Set NOMINAL_CA_BUNDLE to a PEM file of the CA certificates to trust (libcurl/<version> …)`,
   the computer doesn't trust the certificate Nominal presented. See
-  [Environment variables](block.md#environment-variables).
+  [Environment variable](block.md#environment-variable).
 
 `<n> packets could not be sent to the relay`
 : In proxy mode, the computer couldn't send to **Proxy host** and **Proxy port**, and the

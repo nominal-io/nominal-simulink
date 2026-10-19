@@ -1,7 +1,7 @@
 # Nominal Stream Sink
 
 {.lead}
-The block's ports, parameters and the environment variables it reads.
+The block's ports, parameters and the environment variable it reads.
 
 The block is in the library `nominal_lib`, listed as **Nominal** in the Simulink Library Browser.
 Its label on the canvas shows the mode it sends in: **(direct)** or **(proxy)**.
@@ -18,7 +18,8 @@ is then a double scalar: the number of rows dropped so far in the current run.
 
 Text parameters take a MATLAB expression, so enter text in single or double quotes, or the name
 of a variable that holds the text. No parameter can change while the model runs. The dialog greys out
-**API base URL** in proxy mode, and **Proxy host** and **Proxy port** in direct mode.
+**Profile** and **Profile file** in proxy mode, and **Proxy host** and **Proxy port** in direct
+mode.
 
 **Channel names (comma-separated)**
 : Default `'engine.rpm, engine.egt, engine.psi'`. The channel names, in the order of the
@@ -55,10 +56,16 @@ of a variable that holds the text. No parameter can change while the model runs.
   the model. **Via proxy** sends over UDP to `nmproxy`, which writes to Nominal. See
   [Stream through a proxy](../guides/proxy.md).
 
-**API base URL**
-: Default `'https://api.gov.nominal.io/api'`, the standard cloud instance. Direct mode only. The
-  REST API base URL of the Nominal instance the dataset belongs to: the **API URL** on your
-  organization's **API keys** page. Required in direct mode.
+**Profile**
+: Default `'default'`. Direct mode only. The profile in Nominal's config file to read the API key
+  and the instance's REST API base URL from, as its `token` and `base_url`. It is the same file
+  Nominal's other clients read.
+  [API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows what the file holds.
+
+**Profile file**
+: Default `''`, the standard location: `~/.config/nominal/config.yml`, or
+  `%USERPROFILE%\.config\nominal\config.yml` on Windows. Direct mode only. The path of the config
+  file to read **Profile** from, when it is somewhere else.
 
 **Proxy host**
 : Default `'127.0.0.1'`. Proxy mode only. The name or IP address of the computer running
@@ -90,13 +97,9 @@ of a variable that holds the text. No parameter can change while the model runs.
 **Add an output port with the discarded-row count**
 : Default off. Adds the output described under [Ports](#ports).
 
-## Environment variables
+## Environment variable
 
-The block reads these when a run starts. Proxy mode uses neither.
-
-`NOMINAL_TOKEN`
-: The API key. Required in direct mode. Set it in MATLAB with `setenv('NOMINAL_TOKEN', '<API key>')`,
-  or in the operating system's environment before MATLAB starts.
+The block reads this when a run starts, in direct mode only.
 
 `NOMINAL_CA_BUNDLE`
 : Optional. The path to a PEM file of CA certificates to verify Nominal's HTTPS certificate with.

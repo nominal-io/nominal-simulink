@@ -26,8 +26,8 @@ cmake/              the toolchain file for cross-compiling to QNX
 ## How it sends
 
 The block's **Mode** parameter chooses the path. In direct mode, the computer running the
-model sends to Nominal over HTTPS, with an API key from the `NOMINAL_TOKEN` environment
-variable. In proxy mode, the block sends UDP packets to `nmproxy`, which holds the API key and
+model sends to Nominal over HTTPS, with the API key and URL from a profile in Nominal's
+config file, the one Nominal's other clients read. In proxy mode, the block sends UDP packets to `nmproxy`, which holds the API key and
 writes to Nominal, so the computer running the model needs no key and does no HTTPS work.
 
 ## Design
@@ -92,5 +92,5 @@ each `v*` tag.
 ## Debugging the block
 
 Configure CMake with `-DNM_SFUN_TRACE=ON` and the S-function logs each callback as it enters,
-which narrows a crash or hang to one callback. `just demo <dataset RID>` streams synthetic rows
-to a dataset without Simulink, using the API key in `NOMINAL_TOKEN`.
+which narrows a crash or hang to one callback. `just demo <dataset RID> [profile]` streams
+synthetic rows to a dataset without Simulink, with the `default` profile unless you name another.

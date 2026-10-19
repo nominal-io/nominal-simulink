@@ -8,21 +8,14 @@ Stream three signals from a new Simulink model into a Nominal dataset.
 Install the Nominal blockset as described in [Install](install.md). The **Nominal Stream Sink**
 block then appears in the Simulink Library Browser under **Nominal**.
 
-## 2. Get an API key and your instance's URL
+## 2. Set up a profile
 
-Your API key and your instance's URL are both on your organization's **API keys** page.
-[API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows where that page is, how to
-create a key, and where to copy the **API URL**.
-
-The block reads the API key from the `NOMINAL_TOKEN` environment variable, so the key is never
-saved into the model file. Set it in MATLAB before you run the model:
-
-```matlab
-setenv('NOMINAL_TOKEN', '<API key>')
-```
-
-`setenv` lasts until MATLAB closes. To keep the key across restarts, set `NOMINAL_TOKEN` in your
-operating system's environment instead.
+The block reads your API key and your instance's URL from a profile in Nominal's config file,
+the file Nominal's other clients read too, so the key is never saved into the model file. It
+uses the profile named `default`. A computer already set up for another Nominal client, such as
+the Python client, has one. Otherwise
+[API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows how to create a key and save
+it in the file.
 
 ## 3. Create a dataset
 
@@ -52,15 +45,13 @@ Double-click the block, then:
    `'noise, chirp, sine'`.
 2. Paste the dataset's RID into **Dataset RID**, inside single quotes: `'<dataset RID>'`. Every
    text field in this dialog takes a MATLAB expression, so text needs the quotes.
-3. Set **API base URL** to the API URL from step 2, also in single quotes. The default,
-   `'https://api.gov.nominal.io/api'`, is the standard cloud instance.
-4. Set **Sample time (s) — how often to write, not the solver step** to `0.01`. The run then
+3. Set **Sample time (s) — how often to write, not the solver step** to `0.01`. The run then
    makes 1001 rows, which fit in the block's buffer however fast the simulation runs.
-5. Click **OK**.
+4. Click **OK**.
 
 Leave **Mode** at **Direct to Nominal** and the other fields at their defaults.
 
-% SCREENSHOT: the block's dialog with the channel names, a placeholder RID, the API base URL and the sample time filled in
+% SCREENSHOT: the block's dialog with the channel names, a placeholder RID and the sample time filled in
 
 ## 6. Run the model
 
@@ -71,16 +62,17 @@ Open the dataset in Nominal. The dataset now has the channels `noise`, `chirp` a
 
 ## If nothing arrives
 
-`Nominal Stream Sink: NOMINAL_TOKEN is not set.` means MATLAB has no API key. Run the `setenv`
-line from step 2 in the same MATLAB session, then run the model again.
+When the run stops with a message about the Nominal config file or a profile, the message names
+the file and what it is missing. [API keys setup](site:/quickstart/quickstart/api-keys-setup/)
+shows what the file holds.
 
-When Simulink reports that it can't evaluate **Dataset RID** or **API base URL**, the value is
-missing its quotes.
+When Simulink reports that it can't evaluate **Dataset RID**, the value is missing its quotes.
 
-A warning when the run ends, `Nominal Stream Sink: <dropped> of <total> rows did not reach Nominal`,
-means some rows didn't arrive. When requests failed, the `Last error` at the end of the warning
-gives the reason. Check that **API base URL** is the API URL of the instance the dataset belongs
-to, and that **Dataset RID** is that dataset's RID.
+A warning when the run ends,
+`Nominal Stream Sink: execution <ID>: <dropped> of <total> rows did not reach Nominal`, means
+some rows didn't arrive. When requests failed, the `Last error` at the end of the warning gives
+the reason. Check that the profile's URL is that of the instance the dataset belongs to, and
+that **Dataset RID** is that dataset's RID.
 
 [Errors and warnings](ref/messages.md) lists every message the block shows.
 

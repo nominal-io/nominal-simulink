@@ -28,7 +28,8 @@ hub's quickstart pages rather than describing the app from memory.
 - State only what the source shows or what has been run. Simulink's own behavior, such as data
   types, buses and its menu labels, needs a test in Simulink before a page relies on it.
 - Real-time targets and code generation stay out of the pages until they work.
-- The app calls the credential an API key. The environment variable is still `NOMINAL_TOKEN`.
+- The app calls the credential an API key. The block reads it, with the instance's URL, from a
+  profile in Nominal's config file.
 - Text values in examples keep their single quotes, since the block's text fields take MATLAB
   expressions.
 - Link to other projects on the hub as `[text](site:/{lang}/{project}/{page}/)`, never with an

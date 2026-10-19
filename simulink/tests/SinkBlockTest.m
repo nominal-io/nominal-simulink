@@ -38,7 +38,7 @@ classdef SinkBlockTest < BlocksetTestCase
         end
 
         function stepsWithAnUnreachableEndpoint(~)
-            % baseUrl points at a closed port, so the sender thread fails its POSTs.
+            % The test profile's URL is a closed port, so the sender thread fails its POSTs.
             % That is the point: a model must keep stepping when the network is
             % unreachable, since telemetry loss is never a reason to stall a simulation.
             model = SinkBlockTest.directModel('nm_sink_steps');
@@ -59,13 +59,13 @@ classdef SinkBlockTest < BlocksetTestCase
             tc.verifyEqual(p(1:2), [1 1]);
         end
 
-        function proxyModeNeedsNoTokenAndNoRelay(tc)
-            % Proxy mode must start without a token, because the token stays on the
+        function proxyModeNeedsNoProfileAndNoRelay(~)
+            % Proxy mode must start without a profile, because the API key stays on the
             % relay. It must also start without a reachable relay, and must not stall
             % the model when none is listening. The port here is closed, so nothing
             % receives the datagrams.
-            BlocksetTestCase.setToken(tc, '');
-            model = SinkBlockTest.proxyModel('nm_sink_proxy');
+            [model, blk] = SinkBlockTest.proxyModel('nm_sink_proxy');
+            set_param(blk, 'profileFile', '''no-such-folder/config.yml''');
             sim(model);
         end
 
@@ -84,15 +84,23 @@ classdef SinkBlockTest < BlocksetTestCase
             sim(model);
         end
 
-        function aNonTextUrlIsAnError(tc)
-            [model, blk] = SinkBlockTest.directModel('nm_sink_badurl');
-            set_param(blk, 'baseUrl', '42');
-            try
-                sim(model);
-                tc.verifyFail('a numeric API base URL was accepted. The block should reject it as not text.');
-            catch err
-                tc.verifySubstring(allMessages(err), 'API base URL must be text');
-            end
+        function aNonTextProfileIsAnError(tc)
+            [model, blk] = SinkBlockTest.directModel('nm_sink_badprofile');
+            set_param(blk, 'profile', '42');
+            tc.verifySubstring(SinkBlockTest.runError(model), 'Profile must be text');
+        end
+
+        function profileProblemsStopTheRunByName(tc)
+            % Each way a profile can be missing gets its own message, naming the file, so
+            % the fix is plain from the error alone.
+            [model, blk] = SinkBlockTest.directModel('nm_sink_noprofile');
+            set_param(blk, 'profileFile', '''no-such-folder/config.yml''');
+            tc.verifySubstring(SinkBlockTest.runError(model), ...
+                'could not read the Nominal config file no-such-folder/config.yml');
+
+            set_param(blk, 'profileFile', ['''' BlocksetTestCase.profileFile() ''''], ...
+                'profile', '''staging''');
+            tc.verifySubstring(SinkBlockTest.runError(model), 'has no profile named ''staging''');
         end
 
         function proxyHelloCarriesTheTags(tc)
@@ -175,7 +183,6 @@ classdef SinkBlockTest < BlocksetTestCase
             [model, blk] = BlocksetTestCase.sinkModel(name, ...
                 'channels',     '''smoke.a, smoke.b, smoke.c''', ...
                 'datasetRid',   '''ri.catalog.test.dataset.0''', ...
-                'baseUrl',      '''https://127.0.0.1:1''', ...
                 'sampleTime',   '0.01', ...
                 'capacityRows', '64', ...
                 ... % A popup takes its option text here, even though Evaluate is on and
@@ -226,6 +233,16 @@ classdef SinkBlockTest < BlocksetTestCase
                 frames(end + 1) = struct('type', f.type, ...
                     'tags', {fieldOr(f, 'tags')}, ...
                     'timestamps', fieldOr(f, 'timestamps')); %#ok<AGROW>
+            end
+        end
+
+        function text = runError(model)
+        % Run the model, expecting it to stop, and return every message in the error.
+            text = '';
+            try
+                sim(model);
+            catch err
+                text = allMessages(err);
             end
         end
 

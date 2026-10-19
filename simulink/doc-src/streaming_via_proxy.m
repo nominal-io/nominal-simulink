@@ -45,7 +45,7 @@
 %% Point the Block at It
 % In the block's dialog, set *Mode* to *Via proxy*, *Proxy host* to the relay computer's
 % name or IP address in quotes, and *Proxy port* to the relay's port. *Dataset RID* and
-% the channel names stay as they were. Proxy mode doesn't use |NOMINAL_TOKEN|.
+% the channel names stay as they were. Proxy mode reads no profile.
 %
 % When the model runs, the relay logs |configuration registered| and then |session
 % started|. Every 30 seconds it logs a |stats| line. In it, |rows| above 0 means data is

@@ -5,10 +5,10 @@ classdef (Abstract) BlocksetTestCase < matlab.unittest.TestCase
 %   the class, the way an installed toolbox would, and closes every model after each
 %   test so one test's leftovers cannot decide the next one's outcome.
 %
-%   Also supplies a dummy NOMINAL_TOKEN. Direct mode refuses to start without a token,
-%   correctly, so without one the tests would pass or fail on whether the shell happened
-%   to export a credential rather than on the block. Nothing here reaches a real server,
-%   so the value is irrelevant.
+%   Also writes a profile file for the blocks to read. Direct mode refuses to start
+%   without a profile, correctly, so without one the tests would pass or fail on what
+%   the machine's own config file holds rather than on the block. Its URL points at a
+%   closed port and its key is fake, so nothing reaches a real server.
 
     methods (TestClassSetup)
         function useClone(tc)
@@ -18,8 +18,17 @@ classdef (Abstract) BlocksetTestCase < matlab.unittest.TestCase
             end
         end
 
-        function dummyToken(tc)
-            BlocksetTestCase.setToken(tc, 'test-not-a-real-token');
+        function writeProfile(tc)
+            file = BlocksetTestCase.profileFile();
+            if ~isfolder(fileparts(file))
+                mkdir(fileparts(file));
+            end
+            fid = fopen(file, 'w');
+            fprintf(fid, ['version: 2\nprofiles:\n  default:\n' ...
+                          '    base_url: https://127.0.0.1:1\n' ...
+                          '    token: test-not-a-real-key\n']);
+            fclose(fid);
+            tc.addTeardown(@delete, file);
         end
     end
 
@@ -30,13 +39,9 @@ classdef (Abstract) BlocksetTestCase < matlab.unittest.TestCase
     end
 
     methods (Static)
-        function setToken(tc, value)
-        %SETTOKEN  Set NOMINAL_TOKEN until the calling test or class finishes.
-        %
-        %   By hand rather than with EnvironmentVariableFixture, which R2021b lacks.
-            old = getenv('NOMINAL_TOKEN');
-            setenv('NOMINAL_TOKEN', value);
-            tc.addTeardown(@setenv, 'NOMINAL_TOKEN', old);
+        function file = profileFile()
+        %PROFILEFILE  The profile file the tests' blocks read.
+            file = fullfile(tempdir, 'nominal-simulink-tests', 'config.yml');
         end
 
         function f = folder(name)
@@ -57,7 +62,8 @@ classdef (Abstract) BlocksetTestCase < matlab.unittest.TestCase
             add_block('nominal_lib/Nominal Stream Sink', blk);
             % The block's default 1 ms is not a multiple of the 10 ms fixed step below,
             % and Simulink refuses the model.
-            set_param(blk, 'sampleTime', '0.01');
+            set_param(blk, 'sampleTime', '0.01', ...
+                'profileFile', ['''' BlocksetTestCase.profileFile() '''']);
             if ~isempty(varargin)
                 set_param(blk, varargin{:});
             end
