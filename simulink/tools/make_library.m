@@ -94,7 +94,10 @@ function make_library()
             '15400, ' ...                                    % proxyPort
             ''''', ' ...                                     % tags
             '''auto'', ' ...                                 % executionId
-            '''''']);                                        % profileFile
+            ''''', ' ...                                     % profileFile
+            '1, ' ...                                        % createRun
+            ''''', ' ...                                     % runTitle
+            '''default''']);                                 % refName
 
     % --- mask -------------------------------------------------------------------
     %
@@ -167,6 +170,20 @@ function make_library()
     m.addParameter('Type', 'edit', 'Name', 'profileFile', ...
         'Prompt', 'Profile file', 'Value', '''''');
 
+    % A run in Nominal for each execution, one shared by every execution of the model,
+    % or none. Created when the run starts, so it can be watched live, and ended after
+    % the last row is sent. An empty Run title is made from the model's name.
+    m.addParameter('Type', 'popup', 'Name', 'createRun', ...
+        'Prompt', 'Create run', ...
+        'TypeOptions', {'None', 'One per execution', 'One per model'}, ...
+        'Value', 'None', 'Evaluate', 'on');
+
+    m.addParameter('Type', 'edit', 'Name', 'runTitle', ...
+        'Prompt', 'Run title', 'Value', '''''');
+
+    m.addParameter('Type', 'edit', 'Name', 'refName', ...
+        'Prompt', 'Ref name', 'Value', '''default''');
+
     m.addParameter('Type', 'edit', 'Name', 'proxyHost', ...
         'Prompt', 'Proxy host', 'Value', '''127.0.0.1''');
 
@@ -212,6 +229,7 @@ function make_library()
     % MaskEnables array would do the same job but breaks silently the moment a field is
     % reordered, and this dialog is going to grow.
     m.getParameter('mode').Callback = [pathFixPrefix() 'nominal_sink_modecb(gcb);'];
+    m.getParameter('createRun').Callback = [pathFixPrefix() 'nominal_sink_modecb(gcb);'];
 
     % Picking t0=0 with no tags asks first. See nominal_sink_timecb.
     m.getParameter('timeMode').Callback = [pathFixPrefix() 'nominal_sink_timecb(gcb);'];
@@ -245,7 +263,8 @@ function make_library()
          'convertStringsToChars(profile), sampleTime, capacityRows, timeMode, ' ...
          'showDropped, mode, convertStringsToChars(proxyHost), proxyPort, ' ...
          'nominal_sink_tags(tags), nominal_sink_execid(executionId, tags), ' ...
-         'convertStringsToChars(profileFile)']);
+         'convertStringsToChars(profileFile), createRun, ' ...
+         'convertStringsToChars(runTitle), convertStringsToChars(refName)']);
 
 
     % Apply it once now, so a freshly dragged block starts with the right fields greyed

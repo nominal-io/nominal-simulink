@@ -63,7 +63,8 @@ How often the block writes, the time on each point, and what to do when rows are
 :link: guides/campaigns
 :link-type: doc
 
-Run a model many times into one dataset, each run tagged and starting at time zero.
+Execute a model many times into one dataset, each execution tagged, starting at time zero, and
+a run in Nominal.
 :::
 
 :::{grid-item-card} Reference

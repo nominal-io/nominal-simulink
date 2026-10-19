@@ -67,6 +67,9 @@ enum {
     P_TAGS,           /* key US value RS key US value ..., from nominal_sink_tags */
     P_EXEC_ID,        /* "auto", an ID, or empty for none, from nominal_sink_execid */
     P_PROFILE_FILE,   /* the config file's path, or empty for the default one */
+    P_RUN_MODE,       /* one of the RUN_ values below */
+    P_RUN_TITLE,      /* empty for one made from the model's name */
+    P_REF_NAME,       /* the name the dataset goes under in the run */
     P_COUNT
 };
 
@@ -78,6 +81,11 @@ enum {
     TIME_MODE_SIM      = 1,   /* the run's start time plus simulation time */
     TIME_MODE_SIM_ZERO = 2,   /* simulation time alone, so every run starts at 0 */
     TIME_MODE_WALL     = 3    /* the host's clock when the row is written */
+};
+enum {
+    RUN_NONE          = 1,
+    RUN_PER_EXECUTION = 2,    /* a run for each execution, filtered to all its tags */
+    RUN_PER_MODEL     = 3     /* one run every execution extends, filtered to Tags */
 };
 
 /* The separators nominal_sink_tags joins the Tags field with. */
@@ -103,12 +111,30 @@ typedef struct {
     int        mode;            /* MODE_DIRECT or MODE_PROXY, for the end-of-run report */
     size_t     channel_count;
     char      *execution_id;    /* NULL when the block sends none */
+
+    /* The run, in direct mode. run_rid is empty when there is none. */
+    nm_profile   *profile;      /* kept for the request that ends the run */
+    nm_run_config run;
+    char          run_rid[128];
+    char         *run_title;
+    char         *ref_name;
+    char         *dataset_rid;
+    int64_t       last_ts;      /* the newest row's timestamp */
+    int           has_rows;
 } sink_state;
 
 static void free_state(sink_state *st)
 {
     if (st != NULL) {
         free(st->execution_id);
+        if (st->profile != NULL) {
+            /* Don't leave the API key in freed memory. */
+            memset(st->profile, 0, sizeof *st->profile);
+            free(st->profile);
+        }
+        free(st->run_title);
+        free(st->ref_name);
+        free(st->dataset_rid);
         free(st);
     }
 }
@@ -320,6 +346,133 @@ static void make_execution_id(char *out, size_t len, int64_t now_nanos, const vo
              utc->tm_hour, utc->tm_min, utc->tm_sec, (unsigned)(h & 0xffffffu));
 }
 
+/* A copy of s, or NULL if s is or allocation fails. Caller frees. */
+static char *copy_text(const char *s)
+{
+    char *out;
+
+    if (s == NULL) {
+        return NULL;
+    }
+    out = malloc(strlen(s) + 1);
+    if (out != NULL) {
+        strcpy(out, s);
+    }
+    return out;
+}
+
+/*
+ * The run's title: Run title when set, otherwise one made from the model's name. A run
+ * per execution adds the execution ID, or, with none, the UTC time the run started, as
+ * in "Model A, execution 7". Caller frees.
+ */
+static char *make_run_title(SimStruct *S, const sink_state *st, int run_mode,
+                            const char *given)
+{
+    const char *path = ssGetPath(S);
+    char        title[600];
+    int         model_len;
+
+    if (given != NULL && given[0] != '\0') {
+        return copy_text(given);
+    }
+    /* The block's path starts with the model's name. */
+    model_len = (int)strcspn(path, "/");
+    if (model_len > 256) {
+        model_len = 256;
+    }
+
+    if (run_mode == RUN_PER_MODEL) {
+        snprintf(title, sizeof title, "%.*s", model_len, path);
+    } else if (st->execution_id != NULL) {
+        snprintf(title, sizeof title, "%.*s, execution %.300s", model_len, path,
+                 st->execution_id);
+    } else {
+        time_t     seconds = (time_t)(st->epoch_nanos / 1000000000LL);
+        struct tm *utc = gmtime(&seconds);
+
+        if (utc != NULL) {
+            snprintf(title, sizeof title, "%.*s, %04d-%02d-%02d %02d:%02d:%02d UTC",
+                     model_len, path, utc->tm_year + 1900, utc->tm_mon + 1,
+                     utc->tm_mday, utc->tm_hour, utc->tm_min, utc->tm_sec);
+        } else {
+            snprintf(title, sizeof title, "%.*s", model_len, path);
+        }
+    }
+    return copy_text(title);
+}
+
+/*
+ * Create the run, or with one per model find it. A run per execution shows the points
+ * with all of this execution's tags, its execution ID included. A run per model shows
+ * those with the Tags field's tags, so every execution's points are in it. A failure
+ * warns and the stream carries on: the rows still reach the dataset.
+ */
+static void start_run(SimStruct *S, sink_state *st, const nm_config *cfg, int run_mode)
+{
+    char err[300];
+
+    memset(&st->run, 0, sizeof st->run);
+    st->run.base_url      = st->profile->base_url;
+    st->run.token         = st->profile->token;
+    st->run.ca_bundle_path = cfg->ca_bundle_path;
+    st->run.workspace_rid = st->profile->workspace_rid;
+    st->run.dataset_rid   = st->dataset_rid;
+    st->run.ref_name      = st->ref_name;
+    st->run.title         = st->run_title;
+    st->run.tags          = cfg->tags;
+    st->run.tag_count     = cfg->tag_count;
+    st->run.shared        = run_mode == RUN_PER_MODEL;
+    /* The execution ID is the last tag, and a run per model leaves it out. */
+    if (st->run.shared && st->execution_id != NULL && st->run.tag_count > 0) {
+        st->run.tag_count--;
+    }
+    st->run.start_nanos = st->time_mode == TIME_MODE_SIM_ZERO ? 0 : st->epoch_nanos;
+
+    if (st->run_title == NULL || st->dataset_rid == NULL) {
+        snprintf(err, sizeof err, "out of memory");
+    } else if (nm_run_begin(&st->run, st->run_rid, sizeof st->run_rid,
+                            err, sizeof err) == NM_OK) {
+        /* Only the begin request reads these, and their storage goes when mdlStart
+         * ends. */
+        st->run.tags           = NULL;
+        st->run.tag_count      = 0;
+        st->run.ca_bundle_path = NULL;
+        return;
+    }
+
+    st->run_rid[0] = '\0';
+    {
+        static char warn[1024];
+        snprintf(warn, sizeof warn,
+                 "Nominal Stream Sink: could not create the run '%s' (%s). The rows still "
+                 "go to the dataset.", st->run_title != NULL ? st->run_title : "", err);
+        ssWarning(S, warn);
+    }
+}
+
+/* Set the run's end to the newest row's time, which has to be after its start. */
+static void end_run(SimStruct *S, sink_state *st)
+{
+    char    err[300];
+    int64_t end = st->has_rows ? st->last_ts : st->run.start_nanos;
+
+    if (end <= st->run.start_nanos) {
+        end = st->run.start_nanos + 1;
+    }
+    st->run.ca_bundle_path = getenv("NOMINAL_CA_BUNDLE");
+    if (st->run.ca_bundle_path != NULL && st->run.ca_bundle_path[0] == '\0') {
+        st->run.ca_bundle_path = NULL;
+    }
+    if (nm_run_end(&st->run, st->run_rid, end, err, sizeof err) != NM_OK) {
+        static char warn[1024];
+        snprintf(warn, sizeof warn,
+                 "Nominal Stream Sink: could not set the end of the run '%s' (%s).",
+                 st->run_title, err);
+        ssWarning(S, warn);
+    }
+}
+
 /* ------------------------------------------------------------------ S-function */
 
 static void mdlInitializeSizes(SimStruct *S)
@@ -435,13 +588,15 @@ static void mdlStart(SimStruct *S)
     char      **names = NULL;
     size_t      count = 0;
     char       *proxy_host = NULL;
-    char       *tag_text = NULL, *exec_id = NULL;
+    char       *tag_text = NULL, *exec_id = NULL, *ref_name = NULL;
+    int         run_mode;
     nm_tag     *tags = NULL;
     int         mode;
 
     ssSetPWorkValue(S, 0, NULL);
 
-    mode = (int)mxGetScalar(ssGetSFcnParam(S, P_MODE));
+    mode     = (int)mxGetScalar(ssGetSFcnParam(S, P_MODE));
+    run_mode = (int)mxGetScalar(ssGetSFcnParam(S, P_RUN_MODE));
 
     if (!require_text(S, P_DATASET, "Dataset RID", "'ri.catalog.<...>'")) {
         return;
@@ -579,6 +734,21 @@ static void mdlStart(SimStruct *S)
         cfg.mode     = NM_MODE_DIRECT;
         cfg.base_url = profile->base_url;
         cfg.token    = profile->token;
+
+        if (run_mode != RUN_NONE) {
+            if (!require_text(S, P_RUN_TITLE, "Run title", "'Model A'") ||
+                !require_text(S, P_REF_NAME, "Ref name", "'default'")) {
+                free_state(st);
+                goto cleanup;
+            }
+            ref_name = param_string(S, P_REF_NAME);
+            if (ref_name == NULL || ref_name[0] == '\0') {
+                ssSetErrorStatus(S, "Nominal Stream Sink: Ref name is empty. Enter the name "
+                                    "the dataset goes under in the run, such as 'default'.");
+                free_state(st);
+                goto cleanup;
+            }
+        }
     }
     cfg.capacity_rows = (size_t)mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
     cfg.max_batch_delay_ms = 100;
@@ -615,12 +785,28 @@ static void mdlStart(SimStruct *S)
         goto cleanup;
     }
 
+    /* Direct mode makes the run here, before the first row is written. The stream is
+     * already open, so a stream that can't open leaves no empty run behind. */
+    if (mode != MODE_PROXY && run_mode != RUN_NONE) {
+        char *given = param_string(S, P_RUN_TITLE);
+
+        st->profile     = profile;
+        profile         = NULL;   /* st owns it now, for the request that ends the run */
+        st->ref_name    = ref_name;
+        ref_name        = NULL;
+        st->dataset_rid = copy_text(rid);
+        st->run_title   = make_run_title(S, st, run_mode, given);
+        free(given);
+        start_run(S, st, &cfg, run_mode);
+    }
+
     ssSetPWorkValue(S, 0, st);
     NM_TRACE("mdlStart: stream open, %u channels\n", (unsigned)st->channel_count);
 
 cleanup:
     free(csv);
     free(rid);
+    free(ref_name);
     free(profile_name);
     free(profile_file);
     if (profile != NULL) {
@@ -673,6 +859,8 @@ static void mdlOutputs(SimStruct *S, int_T tid)
     }
 
     nm_push(st->stream, ts, u, st->channel_count);
+    st->last_ts  = ts;
+    st->has_rows = 1;
 
     /* nm_dropped_rows, not nm_stats: the latter copies a 256-byte error string to
      * hand back one number, which is not something to do every step. */
@@ -721,6 +909,11 @@ static void mdlTerminate(SimStruct *S)
      */
     nm_stats_t stats;
     nm_close_stats(st->stream, &stats);
+
+    /* After the final flush, so the run ends once its rows are in. */
+    if (st->run_rid[0] != '\0') {
+        end_run(S, st);
+    }
 
     /*
      * Report only when something went wrong. This is what keeps loss from being silent

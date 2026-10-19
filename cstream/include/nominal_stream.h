@@ -246,6 +246,44 @@ nm_profile_status nm_profile_read(const char *path, const char *name, nm_profile
                                   char *path_used, size_t path_used_len);
 
 /*
+ * Runs. A run is one test or simulation in Nominal: a title, a start and end time, and
+ * the dataset it draws on, filtered to some tags. These two functions call the REST API
+ * and block, so call them where blocking is fine, such as before a model starts and
+ * after it stops, never from a real-time context. They are separate from nm_open so a
+ * slow run request can't hold up the rows a stream is buffering.
+ */
+typedef struct {
+    const char   *base_url;        /* as for nm_config */
+    const char   *token;
+    const char   *ca_bundle_path;  /* NULL for the platform default */
+    const char   *workspace_rid;   /* NULL or "" for the organization's default */
+    const char   *dataset_rid;     /* the dataset the run draws on */
+    const char   *ref_name;        /* the name the dataset goes under, such as "default" */
+    const char   *title;
+    const nm_tag *tags;            /* the run shows only the dataset's points with these */
+    size_t        tag_count;
+    int64_t       start_nanos;
+    int           shared;          /* non-zero: one run for many streams, see below */
+} nm_run_config;
+
+/*
+ * Create the run and write its RID to rid. With shared set, first look for a run with
+ * exactly this title, the most recently created if there are several, and use that one
+ * instead. Blocks for up to about 15 s per request. On failure returns NM_ERR_TRANSPORT,
+ * with the reason in err, or NM_ERR_ARG for a missing setting.
+ */
+nm_status nm_run_begin(const nm_run_config *cfg, char *rid, size_t rid_len,
+                       char *err, size_t err_len);
+
+/*
+ * Set the run's end time, which has to be after its start. With shared set, this only
+ * ever moves the end later, so each stream sharing a run extends it. Blocks for up to
+ * about 15 s.
+ */
+nm_status nm_run_end(const nm_run_config *cfg, const char *rid, int64_t end_nanos,
+                     char *err, size_t err_len);
+
+/*
  * Current wall-clock time as nanoseconds since the Unix epoch.
  *
  * A convenience, not something the library uses: nm_push always takes the timestamp

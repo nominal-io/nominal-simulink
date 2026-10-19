@@ -18,8 +18,8 @@ is then a double scalar: the number of rows dropped so far in the current run.
 
 Text parameters take a MATLAB expression, so enter text in single or double quotes, or the name
 of a variable that holds the text. No parameter can change while the model runs. The dialog greys out
-**Profile** and **Profile file** in proxy mode, and **Proxy host** and **Proxy port** in direct
-mode.
+**Profile**, **Profile file** and the run fields in proxy mode, **Proxy host** and **Proxy port**
+in direct mode, and **Run title** and **Ref name** when **Create run** is **None**.
 
 **Channel names (comma-separated)**
 : Default `'engine.rpm, engine.egt, engine.psi'`. The channel names, in the order of the
@@ -66,6 +66,26 @@ mode.
 : Default `''`, the standard location: `~/.config/nominal/config.yml`, or
   `%USERPROFILE%\.config\nominal\config.yml` on Windows. Direct mode only. The path of the config
   file to read **Profile** from, when it is somewhere else.
+
+**Create run**
+: Default **None**. Direct mode only. **One per execution** creates a run in Nominal when each
+  run of the model starts, so it can be watched live, and sets the run's end once the last row
+  is sent. The run shows the dataset's points with this execution's tags, **Execution ID**
+  included. **One per model** shares one run between every execution with the same title: the
+  first execution creates it, later ones extend its end, and it shows the points with the tags in
+  **Tags (key and value pairs)**, so every execution's points are in it. Executions that start
+  at the same moment, such as `parsim` workers, can each create the run. When a run can't be
+  created or ended, the block warns and the rows still go to the dataset.
+
+**Run title**
+: Default `''`, a title made from the model's name. One per execution adds the execution ID,
+  as in `Model A, execution 7`, or with no execution ID the UTC time the execution started.
+  One per model uses the model's name alone. Used only with **Create run**.
+
+**Ref name**
+: Default `'default'`. The name the dataset goes under in the run. Workbooks find a channel by
+  its ref name and channel name together, so use the ref name your other runs use, such as the
+  hardware team's. Used only with **Create run**.
 
 **Proxy host**
 : Default `'127.0.0.1'`. Proxy mode only. The name or IP address of the computer running

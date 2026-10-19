@@ -125,6 +125,32 @@
 %
 % Programmatic name: |profileFile|. Default: |''|.
 %
+% *Create run* — a run in Nominal for each execution
+%
+% Direct mode only. *One per execution* creates a run when each run of the model starts,
+% so it can be watched live, and sets its end once the last row is sent. The run shows
+% the dataset's points with this execution's tags, the execution ID included. *One per
+% model* shares one run between every execution with the same title: the first creates
+% it, later ones extend its end, and it shows the points with the tags in *Tags*. When a
+% run can't be created or ended, the block warns and the rows still go to the dataset.
+%
+% Programmatic name: |createRun|. Values: |'None'| (default), |'One per execution'|,
+% |'One per model'|.
+%
+% *Run title* — the run's title
+%
+% Empty makes one from the model's name: one per execution adds the execution ID, as in
+% |Model A, execution 7|, and one per model uses the name alone.
+%
+% Programmatic name: |runTitle|. Default: |''|.
+%
+% *Ref name* — the name the dataset goes under in the run
+%
+% Workbooks find a channel by its ref name and channel name together, so use the ref
+% name your other runs use.
+%
+% Programmatic name: |refName|. Default: |'default'|.
+%
 % *Proxy host* — where the relay runs
 %
 % Proxy mode only. The name or IP address of the computer running |nmproxy|.

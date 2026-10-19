@@ -44,6 +44,9 @@ dialog. The rest appear when the run starts.
 `profile '<profile>' in <path> has a value too long to read.`
 : A `base_url` is over 511 characters, a `token` over 4095, or a `workspace_rid` over 255.
 
+`Ref name is empty. Enter the name the dataset goes under in the run, such as 'default'.`
+: **Create run** is on, and the run needs a name for the dataset.
+
 `in proxy mode, Proxy host can't be empty and Proxy port must be from 1 to 65535.`
 : Set both to the address `nmproxy` listens on.
 
@@ -144,6 +147,20 @@ All three mean Nominal was slow to answer or couldn't be reached as the run ende
 
 In proxy mode, this warning covers only rows the block couldn't hand to the network. Anything
 lost after that shows up only in [the relay's log](nmproxy.md#log).
+
+## The run in Nominal
+
+With **Create run** on, the block warns when Nominal doesn't take a run request, and the model
+carries on. The reason in parentheses is either `HTTP status <status>:` followed by the start
+of Nominal's error, or why the computer couldn't reach the profile's `base_url`.
+
+`could not create the run '<title>' (<reason>). The rows still go to the dataset.`
+: Appears as the run starts. The rows reach the dataset, and a run can be made over them in
+  the Nominal app.
+
+`could not set the end of the run '<title>' (<reason>).`
+: Appears as the run ends. The run exists, with no end time, and its end can be set in the
+  Nominal app.
 
 ## Detect from connected signal
 

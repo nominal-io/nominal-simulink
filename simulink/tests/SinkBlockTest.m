@@ -167,6 +167,36 @@ classdef SinkBlockTest < BlocksetTestCase
             tc.verifyEqual(times, int64((0:numel(times) - 1)' * 1e7));
         end
 
+        function aRunThatCantBeCreatedWarnsAndTheModelRuns(tc)
+            % The test profile's URL is a closed port, so creating the run fails. That
+            % must not stop the model, and the warning names the title the block made.
+            [model, blk] = SinkBlockTest.directModel('nm_sink_run'); %#ok<ASGLU> used in evalc
+            set_param(blk, 'createRun', 'One per execution', 'executionId', '7');
+            out = evalc('sim(model)');
+            tc.verifySubstring(out, ...
+                'could not create the run ''nm_sink_run, execution 7''');
+            tc.verifySubstring(out, 'The rows still go to the dataset.');
+        end
+
+        function aRunPerModelIsTitledByTheModel(tc)
+            [model, blk] = SinkBlockTest.directModel('nm_sink_permodel'); %#ok<ASGLU> used in evalc
+            set_param(blk, 'createRun', 'One per model');
+            tc.verifySubstring(evalc('sim(model)'), ...
+                'could not create the run ''nm_sink_permodel''');
+        end
+
+        function aRunTitleIsUsedAsGiven(tc)
+            [model, blk] = SinkBlockTest.directModel('nm_sink_titled'); %#ok<ASGLU> used in evalc
+            set_param(blk, 'createRun', 'One per execution', 'runTitle', '"Bench test"');
+            tc.verifySubstring(evalc('sim(model)'), 'could not create the run ''Bench test''');
+        end
+
+        function anEmptyRefNameStopsTheRun(tc)
+            [model, blk] = SinkBlockTest.directModel('nm_sink_noref');
+            set_param(blk, 'createRun', 'One per execution', 'refName', '''''');
+            tc.verifySubstring(SinkBlockTest.runError(model), 'Ref name is empty');
+        end
+
         function runsInAcceleratorMode(tc)
             % Accelerator mode compiles the model into a MEX of its own, which calls back
             % into the S-function. It needs no Simulink Coder licence, so any user can
