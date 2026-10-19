@@ -29,6 +29,17 @@ matlab_add_mex(
   OUTPUT_NAME nominal_sink_sfun
 )
 
+# On macOS, matlab_add_mex exports the C++ MEX entry points from every MEX, this C one
+# included. The block doesn't define them, and the current Xcode linker won't export a
+# symbol that isn't there. Drop them, which leaves the same exports as mex's C build.
+if(APPLE)
+  get_target_property(_nm_link_flags nominal_sink_sfun LINK_FLAGS)
+  string(REGEX REPLACE "-Wl,-U,_mex[A-Za-z]+" "" _nm_link_flags "${_nm_link_flags}")
+  string(REGEX REPLACE "-Wl,-exported_symbols_list,[^ ]*cppMexFunction\\.map" ""
+         _nm_link_flags "${_nm_link_flags}")
+  set_target_properties(nominal_sink_sfun PROPERTIES LINK_FLAGS "${_nm_link_flags}")
+endif()
+
 target_include_directories(nominal_sink_sfun PRIVATE "${NM_SIMULINK_INCLUDE}")
 
 # A fault inside an S-function is reported as a bare access violation that takes MATLAB
