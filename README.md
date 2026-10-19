@@ -55,16 +55,17 @@ has official curl builds, so the write path is in C.
 
 ## Building and testing
 
-You need CMake, just, and two MATLAB releases with Simulink and a C compiler set up
-(`mex -setup C`). For libcurl, Windows needs vcpkg with `curl:x64-windows-static-md`, Linux
-needs the libcurl development package, and macOS needs only the Xcode Command Line Tools.
+You need CMake, just, and MATLAB R2023a or later with Simulink, with `matlab` on the PATH and a
+C compiler set up (`mex -setup C`). For libcurl, Windows needs vcpkg with
+`curl:x64-windows-static-md`, Linux needs the libcurl development package, and macOS needs only
+the Xcode Command Line Tools. `nmproxy` needs Go 1.25, `just fixtures` needs Rust, and the docs
+need uv.
 
-The oldest release the blockset supports, R2021b, builds everything that ships, because a
-library opens only in the release that saved it or a later one. R2026a builds the toolbox. On a
-Mac with Apple silicon, R2023b takes the place of R2021b, because it is the first release that
-runs natively there. If either release isn't in its default folder, set `MATLAB_OLDEST` or
-`MATLABROOT` to its install folder, with forward slashes. `nmproxy` needs Go 1.25,
-`just fixtures` needs Rust, and the docs need uv.
+If R2021b, the oldest release the blockset supports, is installed in its default folder, it
+builds the S-function and the library, and the tests run in both releases. A library opens only
+in the release that saved it or a later one, so a toolbox built without R2021b installs only in
+the release that built it or a later one. On a Mac, R2023b takes the place of R2021b, because it
+is the first release that runs natively on Apple silicon.
 
 ```shell
 just build         # the C library, the S-function and the demo

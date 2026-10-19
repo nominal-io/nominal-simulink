@@ -4,6 +4,21 @@ cmake_minimum_required(VERSION 3.16)
 # library, and two copies would drift.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/simulink/VERSION" NM_VERSION LIMIT_COUNT 1)
 
+# With no Matlab_ROOT_DIR given, build against the MATLAB that `matlab` starts, so a
+# plain configure needs no settings. Left to itself, FindMatlab picks a release on its
+# own, which needn't be that one.
+if(NOT DEFINED Matlab_ROOT_DIR)
+  find_program(NM_MATLAB_PROGRAM matlab)
+  if(NM_MATLAB_PROGRAM)
+    get_filename_component(nm_matlab "${NM_MATLAB_PROGRAM}" REALPATH)
+    get_filename_component(nm_matlab "${nm_matlab}" DIRECTORY)
+    get_filename_component(nm_matlab "${nm_matlab}" DIRECTORY)
+    if(EXISTS "${nm_matlab}/extern/include/mex.h")
+      set(Matlab_ROOT_DIR "${nm_matlab}" CACHE PATH "MATLAB install folder")
+    endif()
+  endif()
+endif()
+
 # On a Mac, the MEX has to match the architecture of the MATLAB that loads it, which isn't
 # always the Mac's own. MATLAB runs natively on Apple silicon from R2023b, and earlier
 # releases are Intel builds, which run under Rosetta. So build for the MATLAB we build

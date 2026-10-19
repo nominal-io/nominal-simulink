@@ -19,26 +19,28 @@ triplet := env_var_or_default("VCPKG_TRIPLET", "x64-windows-static-md")
 
 curl := if os() == "windows" { "-DCMAKE_TOOLCHAIN_FILE=" + vcpkg + "/scripts/buildsystems/vcpkg.cmake -DVCPKG_TARGET_TRIPLET=" + triplet } else { "" }
 
-# Recipes call MATLAB by full path. Override either install root, forward slashes only:
-#   just oldestroot='C:/Program Files/MATLAB/R2022a' matlabroot='C:/Program Files/MATLAB/R2025b' sim-test
-# or set MATLAB_OLDEST and MATLABROOT.
+# MATLAB is the one on the PATH, as in nominal-matlab. Not on the PATH? Set MATLAB_ROOT
+# to its install folder, with forward slashes.
+matlabroot := env("MATLAB_ROOT", "")
+matlab     := if matlabroot != "" { matlabroot + "/bin/matlab" + exe } else { "matlab" }
+
+# When the oldest release the blockset supports is installed in its default folder, it
+# builds everything that ships, and the tests and docs run in both releases. A library
+# opens only in the release that saved it or a later one, and a MEX built against an
+# older release loads in newer ones but not the reverse. CI always builds with it.
 #
-# Two releases, with different jobs. The oldest one the blockset supports builds
-# everything that ships: a library opens only in the release that saved it or a later
-# one, and a MEX built against an older release loads in newer ones but not the
-# reverse. The newest packages the toolbox (ToolboxOptions needs R2023a or later) and
-# builds the second docs search index.
-#
-# On a Mac, the oldest defaults to R2023b, the first release that runs natively on Apple
-# silicon. Both releases load the one MEX, so they have to be the same architecture, and
-# releases before R2023b are Intel builds. On an Intel Mac, set MATLAB_OLDEST to R2021b.
+# On a Mac the oldest is R2023b, the first release that runs natively on Apple silicon.
+# Both releases load the one MEX, so they have to be the same architecture.
 matlabhome := if os() == "windows" { "C:/Program Files/MATLAB/" } else if os() == "macos" { "/Applications/MATLAB_" } else { "/usr/local/MATLAB/" }
-matlabapp  := if os() == "macos" { ".app" } else { "" }
-oldestrel  := if os() == "macos" { "R2023b" } else { "R2021b" }
-oldestroot := env("MATLAB_OLDEST", matlabhome + oldestrel + matlabapp)
-matlabroot := env("MATLABROOT", matlabhome + "R2026a" + matlabapp)
-oldest     := oldestroot + "/bin/matlab" + exe
-matlab     := matlabroot + "/bin/matlab" + exe
+oldestrel  := if os() == "macos" { "R2023b.app" } else { "R2021b" }
+oldestdir  := matlabhome + oldestrel
+hasoldest  := path_exists(oldestdir)
+oldestroot := if hasoldest == "true" { oldestdir } else { matlabroot }
+oldest     := if hasoldest == "true" { oldestdir + "/bin/matlab" + exe } else { matlab }
+releases   := if oldest == matlab { quote(matlab) } else { quote(oldest) + " " + quote(matlab) }
+
+# With no folder to give it, CMake builds against the MATLAB on the PATH.
+cmakematlab := if oldestroot != "" { "-DMatlab_ROOT_DIR=" + quote(oldestroot) } else { "" }
 
 config  := "Release"
 builddir := "build"
@@ -52,7 +54,7 @@ default: test
 
 # Configure the CMake build tree
 configure:
-    cmake -S . -B {{builddir}} {{curl}} -DMatlab_ROOT_DIR="{{oldestroot}}"
+    cmake -S . -B {{builddir}} {{curl}} {{cmakematlab}}
 
 # Build the library, demo and tests
 build: configure
@@ -109,23 +111,20 @@ example: library
 
 # Regenerate the HTML documentation. Each release builds the search index it reads.
 docs:
-    "{{oldest}}" -batch "addpath('simulink/tools'); make_docs"
-    "{{matlab}}" -batch "addpath('simulink/tools'); make_docs"
+    for m in {{releases}}; do "$m" -batch "addpath('simulink/tools'); make_docs" || exit 1; done
 
 # Build the toolbox installer, build/NominalBlockset-<version>.mltbx
 package: example docs
     "{{matlab}}" -batch "addpath('simulink/tools'); package_blockset"
 
-# Install the package into a clean session on both releases, check the block works from
+# Install the package into a clean session in each release, check the block works from
 # it, and uninstall it again
 install-test:
-    "{{oldest}}" -batch "addpath('simulink/tests'); assertSuccess(runtests('InstalledToolboxTest'))"
-    "{{matlab}}" -batch "addpath('simulink/tests'); assertSuccess(runtests('InstalledToolboxTest'))"
+    for m in {{releases}}; do "$m" -batch "addpath('simulink/tests'); assertSuccess(runtests('InstalledToolboxTest'))" || exit 1; done
 
-# Load the block and step a model without touching the network, on both releases
+# Load the block and step a model without touching the network, in each release
 sim-test: build library
-    "{{oldest}}" -batch "addpath('simulink/tests'); assertSuccess(runtests({'SinkBlockTest', 'AutonamesTest', 'LibraryMetadataTest'}))"
-    "{{matlab}}" -batch "addpath('simulink/tests'); assertSuccess(runtests({'SinkBlockTest', 'AutonamesTest', 'LibraryMetadataTest'}))"
+    for m in {{releases}}; do "$m" -batch "addpath('simulink/tests'); assertSuccess(runtests({'SinkBlockTest', 'AutonamesTest', 'LibraryMetadataTest'}))" || exit 1; done
 
 # Check the MATLAB frame decoder against the same fixtures as the C and Go ones
 matlab-test:
