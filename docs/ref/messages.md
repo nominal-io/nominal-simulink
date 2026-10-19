@@ -55,10 +55,11 @@ dialog. The rest appear when the run starts.
 `out of memory.`
 : MATLAB couldn't allocate the block's working memory.
 
-### Tags
+### Tags and Execution ID
 
-These four come from reading **Tags (key and value pairs)** when the run starts. Simulink shows
-each one beneath its own errors about the block's `nominal_sink_tags(tags)` parameter.
+These come from reading **Tags (key and value pairs)** and **Execution ID** when the run starts.
+Simulink shows each one beneath its own errors about the block's `nominal_sink_tags(tags)` or
+`nominal_sink_execid(executionId, tags)` parameter.
 
 `Tags must be pairs of key and value, such as ["model" "A"; "execution-id" "7"], or a dictionary.`
 : The field holds something else, such as a single text value or an array with other than two
@@ -73,16 +74,27 @@ each one beneath its own errors about the block's `nominal_sink_tags(tags)` para
 `the tag text "<text>" contains a line break or another control character.`
 : A key or value has a line break in it. Remove it.
 
+`Execution ID must be one text value or number, such as 'run-7' or 7.`
+: The field holds an array or a cell array. Give each run one ID.
+
+`Execution ID contains a line break or another control character.`
+: Remove the line break.
+
+`Tags has an execution-id key, which Execution ID also sets. Remove one of them.`
+: Set the ID in one place: in **Execution ID**, or in **Tags (key and value pairs)** with
+  **Execution ID** set to `''`.
+
 ## When a run ends
 
 A run that dropped rows ends with a warning in this form:
 
 ```
-Nominal Stream Sink: <dropped> of <total> rows did not reach Nominal (<cause>). Last error: <reason>
+Nominal Stream Sink: execution <ID>: <dropped> of <total> rows did not reach Nominal (<cause>). Last error: <reason>
 ```
 
-`<total>` is every row the model produced in the run, and `<dropped>` is how many of them never
-reached Nominal. The `Last error` part appears only when sending failed, and describes the most
+`<ID>` is the run's **Execution ID**, and the `execution <ID>:` part is left out when the block
+sends none. `<total>` is every row the model produced in the run, and `<dropped>` is how many of
+them never reached Nominal. The `Last error` part appears only when sending failed, and describes the most
 recent failure. What to do depends on the cause.
 
 `the buffer filled faster than the network drained it`

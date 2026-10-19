@@ -1,8 +1,9 @@
 classdef TagsTest < BlocksetTestCase
-%TAGSTEST  The Tags field and the t0=0 timestamps that need it. No token, no network.
+%TAGSTEST  Tags, the execution ID, and the t0=0 timestamps that need them. No token, no
+%network.
 %
-%   Run via `just sim-test`. SinkBlockTest checks that tags and t0=0 timestamps reach the
-%   relay in what the block actually sends.
+%   Run via `just sim-test`. SinkBlockTest checks that tags, execution IDs and t0=0
+%   timestamps reach the relay in what the block actually sends.
 
     properties (TestParameter)
         % Every form the field takes, as the text a user types and the tags that result.
@@ -20,6 +21,19 @@ classdef TagsTest < BlocksetTestCase
             'emptyKey',    {{'["" "v"]',                'a tag key is empty'}}, ...
             'repeatedKey', {{'["k" "1"; "k" "2"]',      'the tag key "k" appears more than once'}}, ...
             'lineBreak',   {{'["k" "a" + newline + "b"]', 'contains a line break'}});
+
+        % Execution IDs as typed, and the text the S-function gets.
+        id = struct( ...
+            'auto',   {{'''auto''', 'auto'}}, ...
+            'text',   {{'"run-7"',  'run-7'}}, ...
+            'number', {{'7',        '7'}}, ...
+            'none',   {{'''''',     ''}});
+
+        % Execution IDs the field refuses, and the start of the message each gets.
+        refusedId = struct( ...
+            'twoValues', {{'["a" "b"]',             'Execution ID must be one text value or number'}}, ...
+            'cell',      {{'{''a''}',               'Execution ID must be one text value or number'}}, ...
+            'lineBreak', {{'"a" + newline + "b"',   'Execution ID contains a line break'}});
     end
 
     methods (Test)
@@ -34,6 +48,31 @@ classdef TagsTest < BlocksetTestCase
             catch err
                 tc.verifySubstring(err.message, refused{2});
             end
+        end
+
+        function eachIdGivesItsText(tc, id)
+            tc.verifyEqual(nominal_sink_execid(eval(id{1}), []), id{2});
+        end
+
+        function badIdsAreRefusedByName(tc, refusedId)
+            tc.verifyError(@() nominal_sink_execid(eval(refusedId{1}), []), 'nominal:execid');
+            try
+                nominal_sink_execid(eval(refusedId{1}), []);
+            catch err
+                tc.verifySubstring(err.message, refusedId{2});
+            end
+        end
+
+        function anIdInBothFieldsIsRefused(tc)
+            % Two places setting one tag would leave the run to pick one silently.
+            try
+                nominal_sink_execid('auto', ["execution-id" "7"]);
+                tc.verifyFail('an execution-id in Tags was accepted alongside Execution ID.');
+            catch err
+                tc.verifySubstring(err.message, 'Tags has an execution-id key');
+            end
+            tc.verifyEqual(nominal_sink_execid('', ["execution-id" "7"]), '', ...
+                'with Execution ID empty, Tags can set execution-id itself.');
         end
 
         function badTagsStopTheRunWithTheirMessage(tc)
@@ -53,7 +92,7 @@ classdef TagsTest < BlocksetTestCase
         end
 
         function zeroTimeWithoutTagsAsksAndCanBeUndone(tc)
-            [~, blk] = BlocksetTestCase.sinkModel('nm_tags_ask');
+            [~, blk] = BlocksetTestCase.sinkModel('nm_tags_ask', 'executionId', '''''');
             set_param(blk, 'timeMode', 'Directly record simulation time (t0=0)');
 
             asked = containers.Map();
@@ -63,7 +102,7 @@ classdef TagsTest < BlocksetTestCase
         end
 
         function zeroTimeWithoutTagsCanBeKept(tc)
-            [~, blk] = BlocksetTestCase.sinkModel('nm_tags_keep');
+            [~, blk] = BlocksetTestCase.sinkModel('nm_tags_keep', 'executionId', '''''');
             set_param(blk, 'timeMode', 'Directly record simulation time (t0=0)');
             nominal_sink_timecb(blk, @(~) true);
             tc.verifyEqual(get_param(blk, 'timeMode'), 'Directly record simulation time (t0=0)');
@@ -73,12 +112,21 @@ classdef TagsTest < BlocksetTestCase
             % A variable name counts as tags: it may hold them by the time the model runs.
             for tags = {'["model" "A"]', 'nmTags'}
                 [~, blk] = BlocksetTestCase.sinkModel(['nm_tags_quiet' num2str(numel(tags{1}))], ...
-                    'tags', tags{1});
+                    'tags', tags{1}, 'executionId', '''''');
                 set_param(blk, 'timeMode', 'Directly record simulation time (t0=0)');
                 asked = containers.Map();
                 nominal_sink_timecb(blk, @(q) answer(asked, q, true));
                 tc.verifyFalse(asked.isKey('question'), ['asked with tags ' tags{1}]);
             end
+        end
+
+        function zeroTimeWithTheDefaultIdDoesNotAsk(tc)
+            % The automatic execution ID is a tag, so a block left at its defaults is fine.
+            [~, blk] = BlocksetTestCase.sinkModel('nm_tags_default');
+            set_param(blk, 'timeMode', 'Directly record simulation time (t0=0)');
+            asked = containers.Map();
+            nominal_sink_timecb(blk, @(q) answer(asked, q, true));
+            tc.verifyFalse(asked.isKey('question'));
         end
     end
 end

@@ -33,9 +33,11 @@
 #include "nominal_stream.h"
 
 #include <math.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Configure with -DNM_SFUN_TRACE=ON to log entry to each callback. A fault inside an
  * S-function surfaces as a bare access violation that takes MATLAB down with it, with
@@ -62,6 +64,7 @@ enum {
     P_PROXY_HOST,
     P_PROXY_PORT,
     P_TAGS,           /* key US value RS key US value ..., from nominal_sink_tags */
+    P_EXEC_ID,        /* "auto", an ID, or empty for none, from nominal_sink_execid */
     P_COUNT
 };
 
@@ -79,6 +82,10 @@ enum {
 #define TAG_KEY_SEP '\x1f'
 #define TAG_SEP     '\x1e'
 
+/* The tag Execution ID is sent as, and the value that asks for a new ID each run. */
+#define EXEC_ID_TAG  "execution-id"
+#define EXEC_ID_AUTO "auto"
+
 /* Used both when sizing the ports and when opening the stream. */
 #define MSG_NO_CHANNELS "Nominal Stream Sink: the channel list is empty. Enter channel " \
                         "names in quotes, separated by commas, or click Detect from "   \
@@ -93,7 +100,16 @@ typedef struct {
     int        time_mode;
     int        mode;            /* MODE_DIRECT or MODE_PROXY, for the end-of-run report */
     size_t     channel_count;
+    char      *execution_id;    /* NULL when the block sends none */
 } sink_state;
+
+static void free_state(sink_state *st)
+{
+    if (st != NULL) {
+        free(st->execution_id);
+        free(st);
+    }
+}
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -223,31 +239,34 @@ static size_t split_names(const char *csv, char **storage, char ***names)
 /*
  * Split the Tags parameter into tags that point into `text`, which this modifies.
  * nominal_sink_tags has already checked every key and value, so this only has to undo
- * the joining. Returns the count, which is 0 for no tags or if allocation fails. The
- * caller frees *tags.
+ * the joining. Leaves `spare` empty entries after them for the caller to add to. Returns
+ * the count split, which is 0 for no tags. *tags is NULL if allocation failed or there
+ * is nothing to hold. The caller frees *tags.
  */
-static size_t split_tags(char *text, nm_tag **tags)
+static size_t split_tags(char *text, size_t spare, nm_tag **tags)
 {
     size_t count = 0, i = 0;
     char  *p;
 
     *tags = NULL;
-    if (text == NULL || text[0] == '\0') {
-        return 0;
-    }
-    for (p = text; *p != '\0'; p++) {
-        if (*p == TAG_SEP) {
-            count++;
+    if (text != NULL && text[0] != '\0') {
+        count = 1;
+        for (p = text; *p != '\0'; p++) {
+            if (*p == TAG_SEP) {
+                count++;
+            }
         }
     }
-    count++;
+    if (count + spare == 0) {
+        return 0;
+    }
 
-    *tags = calloc(count, sizeof **tags);
+    *tags = calloc(count + spare, sizeof **tags);
     if (*tags == NULL) {
         return 0;
     }
 
-    p = text;
+    p = count > 0 ? text : NULL;
     while (p != NULL && i < count) {
         char *end = strchr(p, TAG_SEP);
         char *sep;
@@ -265,6 +284,38 @@ static size_t split_tags(char *text, nm_tag **tags)
         p = end != NULL ? end + 1 : NULL;
     }
     return i;
+}
+
+/*
+ * A new execution ID: the UTC time the run started, then six hex digits that differ
+ * between runs starting in the same second, such as parsim workers. The digits hash the
+ * clock's nanoseconds, this block's state address and a counter, so two processes
+ * starting together still differ.
+ */
+static void make_execution_id(char *out, size_t len, int64_t now_nanos, const void *salt)
+{
+    static uint32_t counter = 0;
+    uint64_t        h = 0xcbf29ce484222325ULL;   /* FNV-1a, as in nm_frame.c */
+    uint64_t        parts[3];
+    time_t          seconds = (time_t)(now_nanos / 1000000000LL);
+    struct tm      *utc = gmtime(&seconds);
+    size_t          i;
+
+    parts[0] = (uint64_t)now_nanos;
+    parts[1] = (uint64_t)(uintptr_t)salt;
+    parts[2] = ++counter;
+    for (i = 0; i < sizeof parts; i++) {
+        h ^= ((const uint8_t *)parts)[i];
+        h *= 0x100000001b3ULL;
+    }
+
+    if (utc == NULL) {
+        snprintf(out, len, "%06x", (unsigned)(h & 0xffffffu));
+        return;
+    }
+    snprintf(out, len, "%04d%02d%02d-%02d%02d%02d-%06x",
+             utc->tm_year + 1900, utc->tm_mon + 1, utc->tm_mday,
+             utc->tm_hour, utc->tm_min, utc->tm_sec, (unsigned)(h & 0xffffffu));
 }
 
 /* ------------------------------------------------------------------ S-function */
@@ -381,7 +432,7 @@ static void mdlStart(SimStruct *S)
     size_t      count = 0;
     const char *token;
     char       *proxy_host = NULL;
-    char       *tag_text = NULL;
+    char       *tag_text = NULL, *exec_id = NULL;
     nm_tag     *tags = NULL;
     int         mode;
 
@@ -443,9 +494,32 @@ static void mdlStart(SimStruct *S)
     cfg.channel_names = (const char *const *)names;
     cfg.channel_count = count;
 
+    /* The execution ID goes on as one more tag, so it reaches Nominal, and the relay,
+     * exactly as the others do. split_tags leaves room for it. */
     tag_text      = param_string(S, P_TAGS);
-    cfg.tag_count = split_tags(tag_text, &tags);
+    exec_id       = param_string(S, P_EXEC_ID);
+    cfg.tag_count = split_tags(tag_text, 1, &tags);
     cfg.tags      = tags;
+
+    if (exec_id != NULL && exec_id[0] != '\0') {
+        if (strcmp(exec_id, EXEC_ID_AUTO) == 0) {
+            st->execution_id = malloc(32);
+            if (st->execution_id != NULL) {
+                make_execution_id(st->execution_id, 32, st->epoch_nanos, st);
+            }
+        } else {
+            st->execution_id = exec_id;
+            exec_id = NULL;   /* st owns it now */
+        }
+        if (st->execution_id == NULL || tags == NULL) {
+            ssSetErrorStatus(S, "Nominal Stream Sink: out of memory.");
+            free_state(st);
+            goto cleanup;
+        }
+        tags[cfg.tag_count].key   = EXEC_ID_TAG;
+        tags[cfg.tag_count].value = st->execution_id;
+        cfg.tag_count++;
+    }
 
     if (mode == MODE_PROXY) {
         double port = mxGetScalar(ssGetSFcnParam(S, P_PROXY_PORT));
@@ -454,7 +528,7 @@ static void mdlStart(SimStruct *S)
             port < 1.0 || port > 65535.0) {
             ssSetErrorStatus(S, "Nominal Stream Sink: in proxy mode, Proxy host can't be "
                                 "empty and Proxy port must be from 1 to 65535.");
-            free(st);
+            free_state(st);
             goto cleanup;
         }
         cfg.mode       = NM_MODE_PROXY;
@@ -466,7 +540,7 @@ static void mdlStart(SimStruct *S)
         if (url == NULL || url[0] == '\0') {
             ssSetErrorStatus(S, "Nominal Stream Sink: API base URL is empty. Enter the "
                                 "API URL of the Nominal instance the dataset is in.");
-            free(st);
+            free_state(st);
             goto cleanup;
         }
         cfg.mode     = NM_MODE_DIRECT;
@@ -504,7 +578,7 @@ static void mdlStart(SimStruct *S)
                      nm_strerror(status));
         }
         ssSetErrorStatus(S, msg);
-        free(st);
+        free_state(st);
         goto cleanup;
     }
 
@@ -517,6 +591,7 @@ cleanup:
     free(url);
     free(proxy_host);
     free(tag_text);
+    free(exec_id);
     free(tags);
     free(names);
     free(storage);
@@ -617,8 +692,14 @@ static void mdlTerminate(SimStruct *S)
      * written.
      */
     if (stats.rows_dropped > 0 || stats.requests_failed > 0) {
-        static char warn[512];
+        static char warn[1024];
         char        why[96];
+        char        who[300] = "";
+
+        /* In a campaign of runs, which one lost rows. */
+        if (st->execution_id != NULL) {
+            snprintf(who, sizeof who, "execution %s: ", st->execution_id);
+        }
 
         /* Say which of the three ways rows are lost happened, since each has a
          * different remedy. With no failed sends, the loss can only be the buffer
@@ -638,7 +719,8 @@ static void mdlTerminate(SimStruct *S)
                      (unsigned long long)stats.requests_failed);
         }
         snprintf(warn, sizeof warn,
-                 "Nominal Stream Sink: %llu of %llu rows did not reach Nominal (%s).%s%s",
+                 "Nominal Stream Sink: %s%llu of %llu rows did not reach Nominal (%s).%s%s",
+                 who,
                  (unsigned long long)stats.rows_dropped,
                  (unsigned long long)stats.rows_pushed,
                  why,
@@ -646,7 +728,7 @@ static void mdlTerminate(SimStruct *S)
                  stats.last_error);
         ssWarning(S, warn);
     }
-    free(st);
+    free_state(st);
     ssSetPWorkValue(S, 0, NULL);
 }
 

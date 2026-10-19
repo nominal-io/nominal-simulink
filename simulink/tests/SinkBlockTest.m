@@ -97,14 +97,52 @@ classdef SinkBlockTest < BlocksetTestCase
 
         function proxyHelloCarriesTheTags(tc)
             % The relay learns a run's tags only from its HELLO frames, so decode what the
-            % block actually sends.
+            % block actually sends. The execution ID comes last.
             [model, blk] = SinkBlockTest.proxyModel('nm_sink_tagged');
-            set_param(blk, 'tags', '["model" "A"; "execution-id" "7"]');
-            frames = SinkBlockTest.capture(tc, model, blk);
+            set_param(blk, 'tags', '["model" "A"; "parameter-set" "34"]', 'executionId', '7');
+            frames = SinkBlockTest.capture(tc, blk, @() sim(model));
 
             hello = frames(strcmp({frames.type}, 'hello'));
             tc.assertNotEmpty(hello, 'the block sent no HELLO.');
-            tc.verifyEqual(hello(1).tags, {'model', 'A'; 'execution-id', '7'});
+            tc.verifyEqual(hello(1).tags, ...
+                {'model', 'A'; 'parameter-set', '34'; 'execution-id', '7'});
+        end
+
+        function autoExecutionIdsDifferBetweenRuns(tc)
+            % The default 'auto' makes a new ID each run, which is what keeps runs of one
+            % model apart with no setup.
+            [model, blk] = SinkBlockTest.proxyModel('nm_sink_autoid');
+            frames = SinkBlockTest.capture(tc, blk, @() [sim(model), sim(model)]);
+
+            ids = SinkBlockTest.executionIds(frames);
+            tc.verifyNumElements(ids, 2, 'two runs did not get two execution IDs.');
+            tc.verifyTrue(all(~cellfun(@isempty, ...
+                regexp(ids, '^\d{8}-\d{6}-[0-9a-f]{6}$', 'once'))), ...
+                ['an automatic ID is not the UTC start time and six hex digits: ' strjoin(ids, ', ')]);
+        end
+
+        function aSimulationInputLoopSetsEachRun(tc)
+            % The documented way to run a campaign: the fields name variables, and each
+            % run's SimulationInput sets them.
+            [model, blk] = SinkBlockTest.proxyModel('nm_sink_campaign');
+            set_param(blk, 'tags', 'nmTags', 'executionId', 'execId', ...
+                'timeMode', 'Directly record simulation time (t0=0)');
+            params = [34 77 34];
+            in = repmat(Simulink.SimulationInput(model), 1, 3);
+            for k = 1:3
+                in(k) = in(k).setVariable('execId', k);
+                in(k) = in(k).setVariable('nmTags', ["parameter-set" string(params(k))]);
+            end
+            frames = SinkBlockTest.capture(tc, blk, @() sim(in, 'ShowProgress', 'off'));
+
+            hello = frames(strcmp({frames.type}, 'hello'));
+            seen = containers.Map();
+            for h = hello
+                seen(h.tags{end, 2}) = h.tags{1, 2};
+            end
+            tc.verifyEqual(sort(seen.keys), {'1', '2', '3'});
+            tc.verifyEqual(cellfun(@(k) seen(k), {'1', '2', '3'}, 'UniformOutput', false), ...
+                {'34', '77', '34'});
         end
 
         function zeroTimeStampsFromZero(tc)
@@ -113,7 +151,7 @@ classdef SinkBlockTest < BlocksetTestCase
             [model, blk] = SinkBlockTest.proxyModel('nm_sink_zero');
             set_param(blk, 'tags', '["model" "A"]', ...
                 'timeMode', 'Directly record simulation time (t0=0)');
-            frames = SinkBlockTest.capture(tc, model, blk);
+            frames = SinkBlockTest.capture(tc, blk, @() sim(model));
 
             data = frames(strcmp({frames.type}, 'data'));
             tc.assertNotEmpty(data, 'the block sent no rows.');
@@ -163,9 +201,9 @@ classdef SinkBlockTest < BlocksetTestCase
             add_line(model, 'src/1', 'sink/1');
         end
 
-        function frames = capture(tc, model, blk)
-        % Run a proxy-mode model against a socket on this computer and decode every frame
-        % it sent. The frames wait in the socket's buffer until the run ends.
+        function frames = capture(tc, blk, run)
+        % Point a proxy-mode block at a socket on this computer, call run, and decode
+        % every frame the block sent. The frames wait in the socket's buffer meanwhile.
             tc.applyFixture(matlab.unittest.fixtures.PathFixture( ...
                 fullfile(fileparts(fileparts(fileparts(mfilename('fullpath')))), 'matlab')));
             sock = java.net.DatagramSocket(0, java.net.InetAddress.getByName('127.0.0.1'));
@@ -173,7 +211,7 @@ classdef SinkBlockTest < BlocksetTestCase
             sock.setSoTimeout(500);
 
             set_param(blk, 'proxyPort', num2str(sock.getLocalPort()));
-            sim(model);
+            run();
 
             frames = struct('type', {}, 'tags', {}, 'timestamps', {});
             pkt = java.net.DatagramPacket(zeros(1, 1500, 'int8'), 1500);
@@ -188,6 +226,17 @@ classdef SinkBlockTest < BlocksetTestCase
                 frames(end + 1) = struct('type', f.type, ...
                     'tags', {fieldOr(f, 'tags')}, ...
                     'timestamps', fieldOr(f, 'timestamps')); %#ok<AGROW>
+            end
+        end
+
+        function ids = executionIds(frames)
+        % The distinct execution-id values the HELLOs announced, in the order first seen.
+            ids = {};
+            for f = frames(strcmp({frames.type}, 'hello'))
+                row = strcmp(f.tags(:, 1), 'execution-id');
+                if any(row) && ~any(strcmp(ids, f.tags{row, 2}))
+                    ids{end + 1} = f.tags{row, 2}; %#ok<AGROW>
+                end
             end
         end
     end

@@ -94,6 +94,16 @@
 %
 % Programmatic name: |tags|. Default: |[]|, no tags.
 %
+% *Execution ID* — the ID that picks out each run
+%
+% Sent as the tag |execution-id| on every channel. |'auto'| makes a new ID when each run
+% starts: the run's start time in UTC, then six hexadecimal digits that differ between
+% runs starting in the same second. Text or a number sets the ID yourself, such as a
+% variable a script sets for each run with |Simulink.SimulationInput|. |''| sends no
+% execution ID. Tags can't have an |execution-id| key unless this field is empty.
+%
+% Programmatic name: |executionId|. Default: |'auto'|.
+%
 % *Mode* — how the data leaves the model
 %
 % *Direct to Nominal* or *Via proxy*, as described above.
@@ -144,8 +154,8 @@
 % row's simulation time, so the points keep the model's time axis however fast the
 % simulation runs. *Directly record simulation time (t0=0)* stamps each row with its
 % simulation time alone, so every run starts at the same instant, the Unix epoch, and
-% runs overlay without shifting. Give each run its own tags so the dataset can tell them
-% apart. *Host wall clock* stamps each row with the computer's clock when the block writes
+% runs overlay without shifting. The execution ID keeps the runs apart in the dataset.
+% *Host wall clock* stamps each row with the computer's clock when the block writes
 % it. Use it when the model runs in real time alongside hardware.
 %
 % Programmatic name: |timeMode|. Values: |'Simulation time from start'| (default),

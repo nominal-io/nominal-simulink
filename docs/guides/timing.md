@@ -24,10 +24,8 @@ for simulations that run faster or slower than real time.
 
 **Directly record simulation time (t0=0)** stamps each row with its simulation time alone, so
 every run of the model starts at the same instant, the Unix epoch, and runs overlay in a
-workbook without shifting. Give each run its own tags in **Tags (key and value pairs)**, such as
-an execution ID, so the dataset can tell the runs apart.
-[Simulation before hardware](site:/quickstart/quickstart/fundamentals/stories/simulation-first/)
-describes this way of organizing simulation data.
+workbook without shifting. The block's **Execution ID** tags each run's points, which keeps the
+runs apart in the dataset. [Run a campaign of simulations](campaigns.md) puts this to work.
 
 **Host wall clock** stamps each row with the computer's clock at the moment the block writes it.
 Use it when the model runs in real time alongside hardware, so its points line up with data
@@ -44,10 +42,10 @@ fails.
 When a run has dropped rows, MATLAB shows a warning as the run ends:
 
 ```
-Nominal Stream Sink: <dropped> of <total> rows did not reach Nominal (<cause>). Last error: <reason>
+Nominal Stream Sink: execution <ID>: <dropped> of <total> rows did not reach Nominal (<cause>). Last error: <reason>
 ```
 
-`<total>` is every row the model produced in the run. `<cause>` says why rows were lost. When it
+`<ID>` is the run's execution ID. `<total>` is every row the model produced in the run. `<cause>` says why rows were lost. When it
 reads `the buffer filled faster than the network drained it`, the fixes below help. Any other
 cause means sending itself went wrong, and the `Last error` says why.
 [Errors and warnings](../ref/messages.md#when-a-run-ends) covers each cause.

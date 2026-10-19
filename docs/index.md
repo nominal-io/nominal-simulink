@@ -12,6 +12,7 @@ quickstart
 install
 guides/channels
 guides/timing
+guides/campaigns
 guides/proxy
 ```
 
@@ -56,6 +57,13 @@ Run `nmproxy` so the computer running the model needs no API key.
 :link-type: doc
 
 How often the block writes, the time on each point, and what to do when rows are dropped.
+:::
+
+:::{grid-item-card} Run a campaign of simulations
+:link: guides/campaigns
+:link-type: doc
+
+Run a model many times into one dataset, each run tagged and starting at time zero.
 :::
 
 :::{grid-item-card} Reference

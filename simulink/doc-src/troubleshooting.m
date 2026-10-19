@@ -14,11 +14,12 @@
 %% A Warning When the Run Ends
 % The block warns when rows didn't reach Nominal, whether or not its output port is on:
 %
-%   Nominal Stream Sink: <dropped> of <total> rows did not reach Nominal (<cause>).
-%   Last error: <reason>
+%   Nominal Stream Sink: execution <ID>: <dropped> of <total> rows did not reach
+%   Nominal (<cause>). Last error: <reason>
 %
-% The second number is every row the model produced in the run. What to do depends on the
-% cause, in the parentheses:
+% |<ID>| is the run's *Execution ID*, left out when the block sends none. The second
+% number is every row the model produced in the run. What to do depends on the cause, in
+% the parentheses:
 %
 % * |the buffer filled faster than the network drained it|: rows arrived faster than
 %   they could be sent. Raise *Buffer capacity (rows)*, raise the sample time to write

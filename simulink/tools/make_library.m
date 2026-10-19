@@ -92,7 +92,8 @@ function make_library()
             '1, ' ...                                        % mode
             '''127.0.0.1'', ' ...                            % proxyHost
             '15400, ' ...                                    % proxyPort
-            '''''']);                                        % tags
+            ''''', ' ...                                     % tags
+            '''auto''']);                                    % executionId
 
     % --- mask -------------------------------------------------------------------
     %
@@ -140,6 +141,11 @@ function make_library()
     % and stay apart. nominal_sink_tags reads the forms this takes.
     m.addParameter('Type', 'edit', 'Name', 'tags', ...
         'Prompt', 'Tags (key and value pairs)', 'Value', '[]');
+
+    % Sent as one more tag. 'auto' is a new ID each run, made by the S-function when the
+    % run starts. See nominal_sink_execid.
+    m.addParameter('Type', 'edit', 'Name', 'executionId', ...
+        'Prompt', 'Execution ID', 'Value', '''auto''');
 
     % Direct sends HTTPS from this machine; proxy sends compact datagrams to a relay
     % that does the protobuf, TLS and HTTP instead. One block rather than two, because
@@ -231,7 +237,7 @@ function make_library()
         ['convertStringsToChars(channels), convertStringsToChars(datasetRid), ' ...
          'convertStringsToChars(baseUrl), sampleTime, capacityRows, timeMode, ' ...
          'showDropped, mode, convertStringsToChars(proxyHost), proxyPort, ' ...
-         'nominal_sink_tags(tags)']);
+         'nominal_sink_tags(tags), nominal_sink_execid(executionId, tags)']);
 
 
     % Apply it once now, so a freshly dragged block starts with the right fields greyed

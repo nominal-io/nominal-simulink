@@ -41,6 +41,15 @@ of a variable that holds the text. No parameter can change while the model runs.
   [Simulation before hardware](site:/quickstart/quickstart/fundamentals/stories/simulation-first/)
   for how tags and runs fit together.
 
+**Execution ID**
+: Default `'auto'`. Sent as the tag `execution-id` on every channel the block writes, so each
+  run can be picked out of the dataset. `'auto'` makes a new ID when each run starts, such as
+  `20261019-141048-3f2a9c`: the run's start time in UTC, then six hexadecimal digits that differ
+  between runs starting in the same second. Text or a number sets the ID yourself, such as a
+  variable a script sets for each run. `''` sends no execution ID. **Tags (key and value pairs)**
+  can't have an `execution-id` key unless this field is empty. See
+  [Run a campaign of simulations](../guides/campaigns.md).
+
 **Mode**
 : Default **Direct to Nominal**. **Direct to Nominal** sends over HTTPS from the computer running
   the model. **Via proxy** sends over UDP to `nmproxy`, which writes to Nominal. See
@@ -72,8 +81,9 @@ of a variable that holds the text. No parameter can change while the model runs.
 : Default **Simulation time from start**. **Simulation time from start** stamps each row with the
   time the run started plus its simulation time. **Directly record simulation time (t0=0)**
   stamps each row with its simulation time alone, counted from the Unix epoch, so every run
-  starts at the same instant. Choosing it while **Tags (key and value pairs)** is empty asks
-  you to confirm, and **Cancel** sets **Simulation time from start**. **Host wall clock**
+  starts at the same instant. Choosing it while **Tags (key and value pairs)** and
+  **Execution ID** are both empty asks you to confirm, and **Cancel** sets
+  **Simulation time from start**. **Host wall clock**
   stamps each row with the computer's clock when the block writes it. See
   [Timing and dropped rows](../guides/timing.md#the-time-on-each-point).
 

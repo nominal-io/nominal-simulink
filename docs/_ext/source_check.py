@@ -13,6 +13,7 @@ in the same commit as the string.
                                                                   cstream/src/nm_http.c
                      the Detect button's errors                   simulink/**/nominal_sink_autonames.m
                      the Tags field's errors                      simulink/**/nominal_sink_tags.m
+                     the Execution ID field's errors              simulink/**/nominal_sink_execid.m
     ref/nmproxy.md   the relay's log messages and warnings        nmproxy/**/*.go
                      the errors that stop it                      nmproxy/proxy/config.go,
                                                                   nmproxy/proxy/server.go
@@ -190,7 +191,7 @@ def problems(root: Path, docs: Path) -> list[str]:
         require("nmproxy", _go_errors(source.read_text(encoding="utf-8")), source)
 
     # The page leaves off the "Nominal Stream Sink: " the run-time errors start with.
-    for name in ("nominal_sink_autonames.m", "nominal_sink_tags.m"):
+    for name in ("nominal_sink_autonames.m", "nominal_sink_tags.m", "nominal_sink_execid.m"):
         if helper := one(f"simulink/**/{name}"):
             messages = _matlab_errors(helper.read_text(encoding="utf-8"))
             messages = [m.removeprefix("Nominal Stream Sink: ") for m in messages]
