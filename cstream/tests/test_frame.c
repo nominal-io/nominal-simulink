@@ -34,6 +34,9 @@ static const char *const RID = "ri.catalog.test.dataset.abc";
 #define NCH 3
 static const nm_tag TAGS[] = { { "model", "A" }, { "execution-id", "7" } };
 #define NTAGS 2
+static const nm_frame_run RUN = {
+    NM_FRAME_RUN_OWN, 1000000000LL, NTAGS, "Model A, execution 7", "default"
+};
 
 /* row_count sits at header + sequence(8) + channel_count(2). */
 static void put_row_count_ff(uint8_t *buf)
@@ -127,7 +130,7 @@ static void test_hello_roundtrip(void)
     int            names_ok = 1, tags_ok = 1;
 
     n = nm_frame_encode_hello(buf, sizeof buf, 0x1122334455667788ULL, cfg,
-                              RID, NAMES, NCH, TAGS, NTAGS);
+                              RID, NAMES, NCH, TAGS, NTAGS, NULL);
     check(n > NM_FRAME_HEADER_BYTES, "HELLO encodes");
 
     check(nm_frame_decode_hello(buf, n, &h) == 0, "HELLO decodes");
@@ -161,20 +164,109 @@ static void test_hello_roundtrip(void)
         nm_frame_hello h2;
         size_t         n2;
 
-        n2 = nm_frame_encode_hello(other, sizeof other, 1, cfg, RID, NAMES, NCH, NULL, 0);
+        n2 = nm_frame_encode_hello(other, sizeof other, 1, cfg, RID, NAMES, NCH, NULL, 0,
+                                   NULL);
         check(n2 > 0 && nm_frame_decode_hello(other, n2, &h2) == 0 && h2.tag_count == 0,
               "a HELLO with no tags round-trips");
 
         check(nm_frame_encode_hello(other, sizeof other, 1, cfg, RID, NAMES, NCH,
-                                    empty_key, 1) == 0,
+                                    empty_key, 1, NULL) == 0,
               "a tag with an empty key is refused");
     }
+
+    /* With no run asked for, the run fields are still there, empty. */
+    check(h.run_mode == NM_FRAME_RUN_NONE && h.run_tag_count == 0 &&
+          h.run_title.len == 0 && h.ref_name.len == 0,
+          "a HELLO with no run says so");
 
     {
         nm_frame_header hdr;
         check(nm_frame_decode_header(buf, n, &hdr) == 0 &&
               hdr.session_id == 0x1122334455667788ULL && hdr.config_id == cfg,
               "header carries session and config ids");
+    }
+}
+
+static int str_is(nm_frame_str s, const char *want)
+{
+    return s.len == strlen(want) && memcmp(s.ptr, want, s.len) == 0;
+}
+
+/* The run a relay makes for a session, and the END that sets its end. */
+static void test_run_and_end(void)
+{
+    uint8_t         buf[NM_FRAME_MAX_BYTES], copy[NM_FRAME_MAX_BYTES];
+    nm_frame_hello  h;
+    nm_frame_header hdr;
+    nm_frame_run    bad;
+    uint64_t        cfg = nm_frame_config_id(RID, NAMES, NCH, TAGS, NTAGS);
+    int64_t         end = 0;
+    size_t          n, run_at, i;
+    int             all_rejected = 1;
+
+    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS, &RUN);
+    check(n > 0 && nm_frame_decode_hello(buf, n, &h) == 0, "a HELLO with a run round-trips");
+    check(h.run_mode == NM_FRAME_RUN_OWN && h.run_start == RUN.start_nanos &&
+          h.run_tag_count == NTAGS,
+          "HELLO carries the run's mode, start and number of tags");
+    check(str_is(h.run_title, RUN.title) && str_is(h.ref_name, RUN.ref_name),
+          "HELLO carries the run's title and ref name");
+
+    bad = RUN;
+    bad.title = "";
+    check(nm_frame_encode_hello(copy, sizeof copy, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS,
+                                &bad) == 0,
+          "a run with no title is refused");
+    bad = RUN;
+    bad.ref_name = "";
+    check(nm_frame_encode_hello(copy, sizeof copy, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS,
+                                &bad) == 0,
+          "a run with no ref name is refused");
+    bad = RUN;
+    bad.tag_count = NTAGS + 1;
+    check(nm_frame_encode_hello(copy, sizeof copy, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS,
+                                &bad) == 0,
+          "a run can't show more tags than the HELLO has");
+
+    /* The decoder holds a sender to the same rules. run-mode sits before run-start(8),
+     * run-tag-count(2), the title and the ref name. */
+    run_at = n - (2 + strlen(RUN.ref_name)) - (2 + strlen(RUN.title)) - 2 - 8 - 1;
+    memcpy(copy, buf, n);
+    copy[run_at] = 3;
+    check(nm_frame_decode_hello(copy, n, &h) < 0, "an unknown run mode is rejected");
+    memcpy(copy, buf, n);
+    copy[run_at + 9]  = NTAGS + 1;
+    copy[run_at + 10] = 0;
+    check(nm_frame_decode_hello(copy, n, &h) < 0,
+          "a run showing more tags than the HELLO has is rejected");
+    {
+        size_t m = nm_frame_encode_hello(copy, sizeof copy, 1, cfg, RID, NAMES, NCH,
+                                         TAGS, NTAGS, NULL);
+        copy[m - 2 - 2 - 2 - 8 - 1] = NM_FRAME_RUN_OWN;
+        check(nm_frame_decode_hello(copy, m, &h) < 0,
+              "a run with no title or ref name is rejected");
+    }
+
+    n = nm_frame_encode_end(buf, sizeof buf, 7, cfg, 1000002000LL);
+    check(n == NM_FRAME_HEADER_BYTES + 8 && nm_frame_decode_end(buf, n, &end) == 0 &&
+          end == 1000002000LL,
+          "END round-trips");
+    check(nm_frame_decode_header(buf, n, &hdr) == 0 && hdr.type == NM_FRAME_END &&
+          hdr.session_id == 7 && hdr.config_id == cfg,
+          "END carries the session and config ids");
+    check(nm_frame_encode_end(buf, NM_FRAME_HEADER_BYTES + 7, 7, cfg, 0) == 0,
+          "END refuses a buffer too small for it");
+    for (i = 1; i < n; i++) {
+        if (nm_frame_decode_end(buf, i, &end) == 0) {
+            printf("  truncating END to %zu bytes was accepted\n", i);
+            all_rejected = 0;
+        }
+    }
+    check(all_rejected, "END truncated at any length is rejected");
+    {
+        nm_frame_data d;
+        check(nm_frame_decode_hello(buf, n, &h) < 0 && nm_frame_decode_data(buf, n, &d) < 0,
+              "an END decodes as neither HELLO nor DATA");
     }
 }
 
@@ -286,7 +378,7 @@ static void test_rejects_malformed(void)
     size_t          n, i, tag_count_at;
     int             all_rejected = 1;
 
-    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS);
+    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS, &RUN);
 
     check(nm_frame_decode_header(buf, 4, &hdr) < 0, "a runt datagram is rejected");
 
@@ -360,7 +452,7 @@ static void test_rejects_malformed(void)
     }
 
     /* A HELLO must not decode as DATA, or vice versa. */
-    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS);
+    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS, NULL);
     check(nm_frame_decode_data(buf, n, &d) < 0, "a HELLO does not decode as DATA");
 }
 
@@ -473,6 +565,50 @@ static void test_open_refuses_a_mapping_too_large_to_send(void)
         check(s == NULL && status == NM_ERR_ARG, "nm_open refuses a tag with no key");
         nm_close(s);
     }
+
+    /* The run travels in the HELLO too. */
+    {
+        static char long_title[NM_FRAME_MAX_NAME_BYTES + 2];
+        nm_config   cfg;
+
+        memset(&cfg, 0, sizeof cfg);
+        cfg.mode          = NM_MODE_PROXY;
+        cfg.proxy_host    = "127.0.0.1";
+        cfg.proxy_port    = 9;
+        cfg.dataset_rid   = RID;
+        cfg.channel_names = NAMES;
+        cfg.channel_count = NCH;
+        cfg.tags          = TAGS;
+        cfg.tag_count     = NTAGS;
+        cfg.capacity_rows = 16;
+        cfg.run_title     = "Model A, execution 7";
+        cfg.run_ref_name  = "default";
+        cfg.run_tag_count = NTAGS;
+
+        s = nm_open(&cfg, &status);
+        check(s != NULL && status == NM_OK, "a proxy stream with a run opens");
+        nm_close(s);
+
+        cfg.run_ref_name = "";
+        s = nm_open(&cfg, &status);
+        check(s == NULL && status == NM_ERR_ARG, "nm_open refuses a run with no ref name");
+        nm_close(s);
+
+        cfg.run_ref_name  = "default";
+        cfg.run_tag_count = NTAGS + 1;
+        s = nm_open(&cfg, &status);
+        check(s == NULL && status == NM_ERR_ARG,
+              "nm_open refuses a run showing more tags than the stream has");
+        nm_close(s);
+
+        memset(long_title, 'x', sizeof long_title - 1);
+        cfg.run_tag_count = NTAGS;
+        cfg.run_title     = long_title;
+        s = nm_open(&cfg, &status);
+        check(s == NULL && status == NM_ERR_TOO_LARGE,
+              "nm_open refuses a run title too long for the HELLO");
+        nm_close(s);
+    }
 }
 
 /*
@@ -519,12 +655,15 @@ static void print_fixtures(void)
     printf("\nconfig_id = 0x%016llx\n", (unsigned long long)cfg);
 
     n = nm_frame_encode_hello(buf, sizeof buf, 0x1122334455667788ULL, cfg,
-                              RID, NAMES, NCH, TAGS, NTAGS);
+                              RID, NAMES, NCH, TAGS, NTAGS, &RUN);
     dump_fixture("HELLO", buf, n);
 
     n = nm_frame_encode_data(buf, sizeof buf, 0x1122334455667788ULL, cfg, 42ULL,
                              ts, 3, vals, NCH, &rows);
     dump_fixture("DATA", buf, n);
+
+    n = nm_frame_encode_end(buf, sizeof buf, 0x1122334455667788ULL, cfg, 1000002000LL);
+    dump_fixture("END", buf, n);
 }
 
 int main(int argc, char **argv)
@@ -533,6 +672,7 @@ int main(int argc, char **argv)
     test_channel_bound_is_consistent();
     test_config_id_is_stable();
     test_hello_roundtrip();
+    test_run_and_end();
     test_data_roundtrip();
     test_data_respects_mtu();
     test_rejects_malformed();

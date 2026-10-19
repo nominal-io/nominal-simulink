@@ -112,11 +112,13 @@ typedef struct {
     size_t     channel_count;
     char      *execution_id;    /* NULL when the block sends none */
 
-    /* The run, in direct mode. run_rid is empty when there is none. */
+    /* The run. Proxy mode sends its title for the relay to create it, and direct mode
+     * creates it here, so only direct mode fills the rest. run_rid is empty when this
+     * block made no run. */
+    char         *run_title;    /* NULL when Create run is None */
     nm_profile   *profile;      /* kept for the request that ends the run */
     nm_run_config run;
     char          run_rid[128];
-    char         *run_title;
     char         *ref_name;
     char         *dataset_rid;
     int64_t       last_ts;      /* the newest row's timestamp */
@@ -403,10 +405,29 @@ static char *make_run_title(SimStruct *S, const sink_state *st, int run_mode,
 }
 
 /*
- * Create the run, or with one per model find it. A run per execution shows the points
+ * How many of the tags the run shows the points with. A run per execution shows those
  * with all of this execution's tags, its execution ID included. A run per model shows
- * those with the Tags field's tags, so every execution's points are in it. A failure
- * warns and the stream carries on: the rows still reach the dataset.
+ * those with the Tags field's tags, so every execution's points are in it. The execution
+ * ID is the last tag, so that is all but the last.
+ */
+static size_t run_tag_count(const sink_state *st, size_t tag_count, int run_mode)
+{
+    if (run_mode == RUN_PER_MODEL && st->execution_id != NULL && tag_count > 0) {
+        return tag_count - 1;
+    }
+    return tag_count;
+}
+
+/* When the run starts: 0 when rows are stamped with simulation time alone, so the run
+ * covers them, and otherwise the time the execution started. */
+static int64_t run_start(const sink_state *st)
+{
+    return st->time_mode == TIME_MODE_SIM_ZERO ? 0 : st->epoch_nanos;
+}
+
+/*
+ * Create the run, or with one per model find it. A failure warns and the stream carries
+ * on: the rows still reach the dataset.
  */
 static void start_run(SimStruct *S, sink_state *st, const nm_config *cfg, int run_mode)
 {
@@ -421,15 +442,11 @@ static void start_run(SimStruct *S, sink_state *st, const nm_config *cfg, int ru
     st->run.ref_name      = st->ref_name;
     st->run.title         = st->run_title;
     st->run.tags          = cfg->tags;
-    st->run.tag_count     = cfg->tag_count;
+    st->run.tag_count     = run_tag_count(st, cfg->tag_count, run_mode);
     st->run.shared        = run_mode == RUN_PER_MODEL;
-    /* The execution ID is the last tag, and a run per model leaves it out. */
-    if (st->run.shared && st->execution_id != NULL && st->run.tag_count > 0) {
-        st->run.tag_count--;
-    }
-    st->run.start_nanos = st->time_mode == TIME_MODE_SIM_ZERO ? 0 : st->epoch_nanos;
+    st->run.start_nanos   = run_start(st);
 
-    if (st->run_title == NULL || st->dataset_rid == NULL) {
+    if (st->dataset_rid == NULL) {
         snprintf(err, sizeof err, "out of memory");
     } else if (nm_run_begin(&st->run, st->run_rid, sizeof st->run_rid,
                             err, sizeof err) == NM_OK) {
@@ -669,6 +686,33 @@ static void mdlStart(SimStruct *S)
         cfg.tag_count++;
     }
 
+    /* Both modes need the run's settings: direct mode creates the run itself, and proxy
+     * mode sends them for the relay to. */
+    if (run_mode != RUN_NONE) {
+        char *given;
+
+        if (!require_text(S, P_RUN_TITLE, "Run title", "'Model A'") ||
+            !require_text(S, P_REF_NAME, "Ref name", "'default'")) {
+            free_state(st);
+            goto cleanup;
+        }
+        ref_name = param_string(S, P_REF_NAME);
+        if (ref_name == NULL || ref_name[0] == '\0') {
+            ssSetErrorStatus(S, "Nominal Stream Sink: Ref name is empty. Enter the name "
+                                "the dataset goes under in the run, such as 'default'.");
+            free_state(st);
+            goto cleanup;
+        }
+        given         = param_string(S, P_RUN_TITLE);
+        st->run_title = make_run_title(S, st, run_mode, given);
+        free(given);
+        if (st->run_title == NULL) {
+            ssSetErrorStatus(S, "Nominal Stream Sink: out of memory.");
+            free_state(st);
+            goto cleanup;
+        }
+    }
+
     if (mode == MODE_PROXY) {
         double port = mxGetScalar(ssGetSFcnParam(S, P_PROXY_PORT));
 
@@ -682,6 +726,13 @@ static void mdlStart(SimStruct *S)
         cfg.mode       = NM_MODE_PROXY;
         cfg.proxy_host = proxy_host;
         cfg.proxy_port = (uint16_t)port;
+        if (st->run_title != NULL) {
+            cfg.run_title       = st->run_title;
+            cfg.run_ref_name    = ref_name;
+            cfg.run_tag_count   = run_tag_count(st, cfg.tag_count, run_mode);
+            cfg.run_start_nanos = run_start(st);
+            cfg.run_shared      = run_mode == RUN_PER_MODEL;
+        }
     } else {
         /* Only direct mode needs a credential. In proxy mode the dataset RID travels in
          * the frames and the API key lives on the relay, so this computer holds nothing
@@ -734,21 +785,6 @@ static void mdlStart(SimStruct *S)
         cfg.mode     = NM_MODE_DIRECT;
         cfg.base_url = profile->base_url;
         cfg.token    = profile->token;
-
-        if (run_mode != RUN_NONE) {
-            if (!require_text(S, P_RUN_TITLE, "Run title", "'Model A'") ||
-                !require_text(S, P_REF_NAME, "Ref name", "'default'")) {
-                free_state(st);
-                goto cleanup;
-            }
-            ref_name = param_string(S, P_REF_NAME);
-            if (ref_name == NULL || ref_name[0] == '\0') {
-                ssSetErrorStatus(S, "Nominal Stream Sink: Ref name is empty. Enter the name "
-                                    "the dataset goes under in the run, such as 'default'.");
-                free_state(st);
-                goto cleanup;
-            }
-        }
     }
     cfg.capacity_rows = (size_t)mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
     cfg.max_batch_delay_ms = 100;
@@ -769,9 +805,10 @@ static void mdlStart(SimStruct *S)
         static char msg[384];
         if (status == NM_ERR_TOO_LARGE) {
             snprintf(msg, sizeof msg,
-                     "Nominal Stream Sink: in proxy mode, the dataset RID, channel names and "
-                     "tags have to fit in one 1400-byte packet to the relay, and these don't. "
-                     "Use fewer or shorter channel names or tags.");
+                     "Nominal Stream Sink: in proxy mode, the dataset RID, channel names, tags "
+                     "and run title have to fit in one 1400-byte packet to the relay, and these "
+                     "don't. Use fewer or shorter channel names or tags, or a shorter run "
+                     "title.");
         } else if (mode == MODE_PROXY && status == NM_ERR_TRANSPORT) {
             snprintf(msg, sizeof msg,
                      "Nominal Stream Sink: could not set up sending to Proxy host '%s'. "
@@ -788,15 +825,11 @@ static void mdlStart(SimStruct *S)
     /* Direct mode makes the run here, before the first row is written. The stream is
      * already open, so a stream that can't open leaves no empty run behind. */
     if (mode != MODE_PROXY && run_mode != RUN_NONE) {
-        char *given = param_string(S, P_RUN_TITLE);
-
         st->profile     = profile;
         profile         = NULL;   /* st owns it now, for the request that ends the run */
         st->ref_name    = ref_name;
         ref_name        = NULL;
         st->dataset_rid = copy_text(rid);
-        st->run_title   = make_run_title(S, st, run_mode, given);
-        free(given);
         start_run(S, st, &cfg, run_mode);
     }
 

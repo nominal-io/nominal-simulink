@@ -14,10 +14,11 @@
  * DESIGN
  *
  * Automatic channel configuration is the property worth protecting, so the format is
- * built around it. Two frame types:
+ * built around it. Three frame types:
  *
- *   HELLO  session, config_id, dataset RID, ordered channel names, tags.
+ *   HELLO  session, config_id, dataset RID, ordered channel names, tags, the run.
  *   DATA   session, config_id, sequence, rows of (timestamp, values[]).
+ *   END    session, config_id, the time the session's data ends.
  *
  * DATA references channels by index into the HELLO list, never by name, so a row costs
  * 8 bytes per channel and the sender does no string work at all.
@@ -32,6 +33,10 @@
  * restart. It also makes a *changed* channel list unambiguous rather than silently
  * misaligning columns, which is the failure mode that would otherwise produce
  * plausible-looking wrong data.
+ *
+ * The run is per session, not per configuration, so it is left out of config_id. A relay
+ * creates the run on a session's first HELLO and sets its end on END. END is sent several
+ * times, since UDP can lose any one of them, and a relay acts on the first.
  *
  * Numeric fields are little-endian, not the big-endian "network byte order" convention.
  * That convention governs IP/TCP/UDP header fields. A datagram payload is opaque to the
@@ -106,8 +111,16 @@
 
 typedef enum {
     NM_FRAME_HELLO = 1,
-    NM_FRAME_DATA  = 2
+    NM_FRAME_DATA  = 2,
+    NM_FRAME_END   = 3
 } nm_frame_type;
+
+/* What run a relay makes for a session, from the HELLO's run-mode. */
+typedef enum {
+    NM_FRAME_RUN_NONE   = 0,
+    NM_FRAME_RUN_OWN    = 1,   /* a run for this session alone */
+    NM_FRAME_RUN_SHARED = 2    /* one run for every session with this title */
+} nm_frame_run_mode;
 
 /*
  * Common header, 24 bytes, identical in both frame types so a decoder can dispatch
@@ -135,10 +148,11 @@ typedef struct {
  * In ABNF (RFC 5234), which unlike plain BNF can express fixed octet counts. `nOCTET`
  * means exactly n octets; `%xNN` is a literal octet.
  *
- *   frame         = hello-frame / data-frame
+ *   frame         = hello-frame / data-frame / end-frame
  *
  *   hello-frame   = magic version %x01 reserved session-id config-id hello-body
  *   data-frame    = magic version %x02 reserved session-id config-id data-body
+ *   end-frame     = magic version %x03 reserved session-id config-id end-time
  *
  *   magic         = %x4E.4D.53.31   ; "NMS1", in order
  *   version       = OCTET           ; NM_FRAME_VERSION; a decoder rejects others
@@ -146,13 +160,24 @@ typedef struct {
  *   session-id    = u64             ; distinguishes concurrent models
  *   config-id     = u64             ; hash of the RID, channel names and tags
  *
- *   hello-body    = rid channel-count *channel-name tag-count *tag
+ *   hello-body    = rid channel-count *channel-name tag-count *tag run
  *   rid           = length *OCTET   ; not NUL-terminated
  *   channel-name  = length *OCTET   ; not NUL-terminated
  *   tag-count     = u16
  *   tag           = tag-key tag-value
  *   tag-key       = length 1*OCTET  ; not NUL-terminated, not empty
  *   tag-value     = length *OCTET   ; not NUL-terminated
+ *
+ *   run           = run-mode run-start run-tag-count run-title ref-name
+ *   run-mode      = %x00            ; no run
+ *                 / %x01            ; a run for this session
+ *                 / %x02            ; one run for every session with this title
+ *   run-start     = i64             ; nanoseconds, Unix epoch
+ *   run-tag-count = u16             ; the run shows the points with the first this-many tags
+ *   run-title     = length *OCTET   ; not NUL-terminated
+ *   ref-name      = length *OCTET   ; the name the dataset goes under in the run
+ *
+ *   end-time      = i64             ; nanoseconds, Unix epoch: the newest row's timestamp
  *
  *   data-body     = sequence channel-count row-count *row
  *   sequence      = u64             ; per-session, monotonic; gaps are loss
@@ -182,6 +207,8 @@ typedef struct {
  *      bearing the same config-id.
  *   5. no frame exceeds NM_FRAME_MAX_BYTES, channel-count <= NM_FRAME_MAX_CHANNELS, and
  *      tag-count <= NM_FRAME_MAX_TAGS.
+ *   6. run-tag-count <= tag-count, and unless run-mode is %x00, run-title and ref-name
+ *      are not empty.
  *
  * This is precisely why a decoder must check every length against the bytes actually
  * received rather than trusting the grammar: a frame can be perfectly well-formed
@@ -206,16 +233,31 @@ uint64_t nm_frame_config_id(const char *dataset_rid,
                             size_t channel_count,
                             const nm_tag *tags, size_t tag_count);
 
+/* The run a HELLO asks a relay for. title and ref_name are each at most
+ * NM_FRAME_MAX_NAME_BYTES, and both are required unless mode is NM_FRAME_RUN_NONE. */
+typedef struct {
+    nm_frame_run_mode mode;
+    int64_t           start_nanos;
+    size_t            tag_count;   /* the run shows the points with the first tag_count tags */
+    const char       *title;
+    const char       *ref_name;
+} nm_frame_run;
+
 /*
- * Encode a HELLO. Returns bytes written, or 0 if it would not fit or an argument is
- * out of range.
+ * Encode a HELLO. run NULL asks for no run. Returns bytes written, or 0 if it would not
+ * fit or an argument is out of range.
  */
 size_t nm_frame_encode_hello(uint8_t *buf, size_t buf_len,
                              uint64_t session_id, uint64_t config_id,
                              const char *dataset_rid,
                              const char *const *channel_names,
                              size_t channel_count,
-                             const nm_tag *tags, size_t tag_count);
+                             const nm_tag *tags, size_t tag_count,
+                             const nm_frame_run *run);
+
+/* Encode an END. Returns bytes written, or 0 if buf is too small. */
+size_t nm_frame_encode_end(uint8_t *buf, size_t buf_len,
+                           uint64_t session_id, uint64_t config_id, int64_t end_nanos);
 
 /*
  * Encode a DATA frame from row-major values — the same layout the ring stores and the
@@ -255,9 +297,17 @@ typedef struct {
     nm_frame_str tag_keys[NM_FRAME_MAX_TAGS];
     nm_frame_str tag_values[NM_FRAME_MAX_TAGS];
     size_t       tag_count;
+    uint8_t      run_mode;        /* an nm_frame_run_mode */
+    int64_t      run_start;
+    size_t       run_tag_count;
+    nm_frame_str run_title;
+    nm_frame_str ref_name;
 } nm_frame_hello;
 
 int nm_frame_decode_hello(const uint8_t *buf, size_t len, nm_frame_hello *out);
+
+/* Decode an END. Returns 0 and the end time, or negative if malformed. */
+int nm_frame_decode_end(const uint8_t *buf, size_t len, int64_t *end_nanos);
 
 /*
  * Decode a DATA body. Points into `buf`; values are little-endian float64 and must be

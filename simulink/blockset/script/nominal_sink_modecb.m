@@ -5,7 +5,7 @@ function nominal_sink_modecb(blk)
 %   uses a profile, which holds the API key and URL. Proxy mode uses a host and port and
 %   needs no credential. Leaving both sets enabled would imply a proxy host matters in
 %   direct mode, or that a profile matters in proxy mode. The run's title and ref name
-%   matter only when the block creates a run, which it does in direct mode.
+%   matter only when Create run asks for a run, in either mode.
 %
 %   Works by parameter name rather than through the positional MaskEnables array, so
 %   adding or reordering a field cannot silently disable the wrong one.
@@ -18,13 +18,12 @@ function nominal_sink_modecb(blk)
     end
 
     isProxy = strcmp(get_param(blk, 'mode'), 'Via proxy');
-    makesRun = ~isProxy && ~strcmp(get_param(blk, 'createRun'), 'None');
+    makesRun = ~strcmp(get_param(blk, 'createRun'), 'None');
 
     setEnabled(m, 'profile',     ~isProxy);
     setEnabled(m, 'profileFile', ~isProxy);
     setEnabled(m, 'proxyHost',    isProxy);
     setEnabled(m, 'proxyPort',    isProxy);
-    setEnabled(m, 'createRun',   ~isProxy);
     setEnabled(m, 'runTitle',     makesRun);
     setEnabled(m, 'refName',      makesRun);
 end

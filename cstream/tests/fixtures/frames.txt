@@ -10,12 +10,15 @@
 #   dataset RID   ri.catalog.test.dataset.abc
 #   channels      engine.rpm, engine.egt, engine.psi
 #   tags          model=A, execution-id=7
+#   run           a run for this session, starting at 1000000000, showing both tags,
+#                 titled "Model A, execution 7", with the dataset under "default"
 #   session_id    0x1122334455667788
 #   config_id     0x5bbb5bdfcbf6bf55
 #   sequence      42
 #   rows          ts=1000000000  1500.0    700.0   30.0
 #                 ts=1000001000  1510.5    701.5   30.1
 #                 ts=1000002000  1521.25   703.0   30.2
+#   end           1000002000
 #
 # A decoder that reproduces exactly those values from the bytes below is conformant.
 #
@@ -48,15 +51,21 @@ max_channels 169
 # are x86-64 and the payload is mostly IEEE-754 doubles already stored little-endian, so
 # big-endian would mean byte-swapping every value on the host least able to afford it.
 
-# HELLO, 120 bytes
+# HELLO, 162 bytes
 # 4e4d5331 magic "NMS1" | 01 version | 01 type=HELLO | 0000 reserved
 # 8877665544332211 session | 55bff6cbdf5bbb5b config
 # 1b00 rid_len=27 | rid | 0300 channel_count=3 | (0a00 len + name) x3
 # 0200 tag_count=2 | (len + key, len + value) x2
-hello 4e4d533101010000887766554433221155bff6cbdf5bbb5b1b0072692e636174616c6f672e746573742e646174617365742e61626303000a00656e67696e652e72706d0a00656e67696e652e6567740a00656e67696e652e707369020005006d6f64656c0100410c00657865637574696f6e2d6964010037
+# 01 run_mode=1 | 00ca9a3b00000000 run_start | 0200 run_tag_count=2
+# 1400 len + title | 0700 len + ref name
+hello 4e4d533101010000887766554433221155bff6cbdf5bbb5b1b0072692e636174616c6f672e746573742e646174617365742e61626303000a00656e67696e652e72706d0a00656e67696e652e6567740a00656e67696e652e707369020005006d6f64656c0100410c00657865637574696f6e2d69640100370100ca9a3b00000000020014004d6f64656c20412c20657865637574696f6e2037070064656661756c74
 
 # DATA, 132 bytes
 # header as above with type=02 | 2a00000000000000 sequence=42
 # 0300 channel_count=3 | 0300 row_count=3
 # then per row: 8-byte LE int64 timestamp, then channel_count 8-byte LE float64 values
 data 4e4d533101020000887766554433221155bff6cbdf5bbb5b2a000000000000000300030000ca9a3b0000000000000000007097400000000000e085400000000000003e40e8cd9a3b0000000000000000009a97400000000000ec85409a99999999193e40d0d19a3b000000000000000000c597400000000000f885403333333333333e40
+
+# END, 32 bytes
+# header as above with type=03 | d0d19a3b00000000 end=1000002000
+end 4e4d533101030000887766554433221155bff6cbdf5bbb5bd0d19a3b00000000

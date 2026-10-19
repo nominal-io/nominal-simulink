@@ -45,6 +45,11 @@
  * long a restarted relay discards data, at a cost of one HELLO datagram per second. */
 #define NM_HELLO_INTERVAL_MS 1000
 
+/* How many times proxy mode sends END at close, and how far apart. UDP can lose any one
+ * of them, and a relay still busy with the final rows is the likeliest to. */
+#define NM_END_REPEATS     3
+#define NM_END_INTERVAL_MS 50
+
 struct nm_stream {
     nm_mode   mode;
     nm_ring   ring;
@@ -59,6 +64,10 @@ struct nm_stream {
     uint64_t  sequence;
     uint32_t  ms_since_hello;
     char     *dataset_rid;   /* kept, because HELLO re-sends it */
+    nm_frame_run run;        /* likewise; title and ref_name point into run_pool */
+    char        *run_pool;
+    int64_t      last_ts;    /* the newest row's timestamp, for END */
+    int          has_rows;
 
     nm_channel_desc *channels;      /* channel_count entries */
     char            *name_pool;     /* one allocation holding every channel name */
@@ -198,7 +207,53 @@ static size_t encode_hello(const nm_stream *s, uint8_t *buf, size_t len)
     }
     return nm_frame_encode_hello(buf, len, s->session_id, s->config_id,
                                  s->dataset_rid, names, s->channel_count,
-                                 s->tags, s->tag_count);
+                                 s->tags, s->tag_count, &s->run);
+}
+
+/* Copy the run's settings, which every HELLO repeats. With no title, the HELLO asks for
+ * no run. */
+static int copy_run(nm_stream *s, const nm_config *cfg)
+{
+    size_t title, ref;
+
+    s->run.mode = NM_FRAME_RUN_NONE;
+    s->run.title = s->run.ref_name = "";
+    if (cfg->run_title == NULL || cfg->run_title[0] == '\0') {
+        return 0;
+    }
+    title = strlen(cfg->run_title) + 1;
+    ref   = strlen(cfg->run_ref_name) + 1;
+    s->run_pool = malloc(title + ref);
+    if (s->run_pool == NULL) {
+        return -1;
+    }
+    memcpy(s->run_pool, cfg->run_title, title);
+    memcpy(s->run_pool + title, cfg->run_ref_name, ref);
+
+    s->run.mode        = cfg->run_shared ? NM_FRAME_RUN_SHARED : NM_FRAME_RUN_OWN;
+    s->run.start_nanos = cfg->run_start_nanos;
+    s->run.tag_count   = cfg->run_tag_count;
+    s->run.title       = s->run_pool;
+    s->run.ref_name    = s->run_pool + title;
+    return 0;
+}
+
+/* Tell the relay the stream has ended, so it can set the end of the run. Sent a few
+ * times because nothing confirms it arrived, and a relay acts on the first. The end is
+ * the newest row's time, or the run's start when no row was written. */
+static void send_end(nm_stream *s)
+{
+    uint8_t buf[NM_FRAME_HEADER_BYTES + 8];
+    int64_t end = s->has_rows ? s->last_ts : s->run.start_nanos;
+    size_t  n = nm_frame_encode_end(buf, sizeof buf, s->session_id, s->config_id, end);
+    int     i;
+
+    for (i = 0; i < NM_END_REPEATS && n > 0; i++) {
+        if (i > 0) {
+            nm_sleep_ms(NM_END_INTERVAL_MS);
+        }
+        nm_udp_send(s->udp, buf, n);
+    }
 }
 
 /* Re-announce the channel mapping. Losing this to a dropped datagram is expected and
@@ -429,6 +484,12 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
             st = NM_ERR_ARG;
             goto done;
         }
+        if (cfg->run_title != NULL && cfg->run_title[0] != '\0' &&
+            (cfg->run_ref_name == NULL || cfg->run_ref_name[0] == '\0' ||
+             cfg->run_tag_count > cfg->tag_count)) {
+            st = NM_ERR_ARG;
+            goto done;
+        }
         /* One row must fit a datagram, and that depends only on the channel count.
          * Failing here is far kinder than discovering it per-batch at runtime. */
         if (nm_frame_rows_per_datagram(cfg->channel_count) == 0) {
@@ -468,7 +529,7 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
         /* No protobuf in proxy mode, so no encode buffer: frames are built on the
          * sender thread's stack, bounded by the MTU. */
         s->dataset_rid = malloc(strlen(cfg->dataset_rid) + 1);
-        if (s->dataset_rid == NULL) {
+        if (s->dataset_rid == NULL || copy_run(s, cfg) != 0) {
             st = NM_ERR_ALLOC;
             goto fail;
         }
@@ -482,9 +543,9 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
         s->session_id = s->config_id ^ (uint64_t)nm_now_nanos();
 
         /* The channel count alone does not settle whether the mapping fits one
-         * datagram: the names, the RID and the tags travel in it too. One that does not fit
-         * could never be sent, so the relay would discard every row for want of a
-         * mapping while this side saw nothing wrong. Refuse it here instead. */
+         * datagram: the names, the RID, the tags and the run travel in it too. One that
+         * does not fit could never be sent, so the relay would discard every row for want
+         * of a mapping while this side saw nothing wrong. Refuse it here instead. */
         {
             uint8_t probe[NM_FRAME_MAX_BYTES];
             if (encode_hello(s, probe, sizeof probe) == 0) {
@@ -574,6 +635,8 @@ int nm_push(nm_stream *s, int64_t timestamp_nanos, const double *values, size_t 
     }
 
     s->rows_pushed += 1;
+    s->last_ts      = timestamp_nanos;
+    s->has_rows     = 1;
     if (nm_ring_push(&s->ring, timestamp_nanos, values)) {
         s->rows_accepted += 1;
         return 0;
@@ -610,6 +673,8 @@ void nm_close(nm_stream *s)
 
 void nm_close_stats(nm_stream *s, nm_stats_t *out)
 {
+    int opened;
+
     if (s == NULL) {
         if (out != NULL) {
             memset(out, 0, sizeof *out);
@@ -621,6 +686,8 @@ void nm_close_stats(nm_stream *s, nm_stats_t *out)
      * to the same limit as the one below. */
     s->close_deadline = nm_now_nanos() + (int64_t)s->close_timeout_ms * 1000000;
 
+    /* Only a stream nm_open finished has announced itself, so only it sends END. */
+    opened = s->thread_started;
     if (s->thread_started) {
         s->running = 0;
         nm_thread_join(s->thread);
@@ -635,6 +702,10 @@ void nm_close_stats(nm_stream *s, nm_stats_t *out)
         nm_http_close(s->http);
     }
     if (s->udp != NULL) {
+        /* After the last DATA frame, so a relay that sees END has the rows before it. */
+        if (opened) {
+            send_end(s);
+        }
         nm_udp_close(s->udp);
     }
 
@@ -651,6 +722,7 @@ void nm_close_stats(nm_stream *s, nm_stats_t *out)
     free(s->tags);
     free(s->tag_pool);
     free(s->dataset_rid);
+    free(s->run_pool);
     free(s);
 }
 
@@ -683,8 +755,8 @@ const char *nm_strerror(nm_status status)
     case NM_ERR_TRANSPORT: return "could not set up the HTTPS client or the socket to the "
                                   "relay";
     case NM_ERR_CLOSED:    return "stream is closed";
-    case NM_ERR_TOO_LARGE: return "the dataset RID and channel names do not fit in one "
-                                  "packet to the relay";
+    case NM_ERR_TOO_LARGE: return "the dataset RID, channel names, tags and run title do not "
+                                  "fit in one packet to the relay";
     }
     return "unknown status";
 }

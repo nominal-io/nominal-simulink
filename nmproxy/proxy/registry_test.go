@@ -134,7 +134,7 @@ func newTestRegistry(t *testing.T, cfg Config) (*Registry, *LogWriter) {
 	if cfg.IdleTimeout == 0 {
 		cfg.IdleTimeout = time.Minute
 	}
-	return NewRegistry(w, cfg, quietLogger()), w
+	return NewRegistry(w, nil, cfg, quietLogger()), w
 }
 
 func TestHelloThenDataWrites(t *testing.T) {
@@ -275,7 +275,7 @@ func TestAllowlistRefusesUnlistedDatasets(t *testing.T) {
 // not once per HELLO.
 func TestRefusedDatasetsAreLoggedOncePerRID(t *testing.T) {
 	rec := &logRecorder{}
-	r := NewRegistry(&LogWriter{Log: quietLogger()}, Config{
+	r := NewRegistry(&LogWriter{Log: quietLogger()}, nil, Config{
 		IdleTimeout:     time.Minute,
 		AllowedDatasets: []string{"ri.catalog.test.dataset.something-else"},
 	}, slog.New(rec))
@@ -299,7 +299,7 @@ func TestRefusedDatasetsAreLoggedOncePerRID(t *testing.T) {
 // Any sender can invent RIDs, so the number named in the log is capped.
 func TestRefusedDatasetLoggingIsCapped(t *testing.T) {
 	rec := &logRecorder{}
-	r := NewRegistry(&LogWriter{Log: quietLogger()}, Config{
+	r := NewRegistry(&LogWriter{Log: quietLogger()}, nil, Config{
 		IdleTimeout:     time.Minute,
 		AllowedDatasets: []string{"ri.catalog.test.dataset.something-else"},
 	}, slog.New(rec))
@@ -386,7 +386,7 @@ func (w *asyncFailWriter) Open(rid string, channels []string, tags map[string]st
 // once showed write_errors=0 while every request failed.
 func TestWritesThatFailLaterAreCounted(t *testing.T) {
 	w := &asyncFailWriter{LogWriter: LogWriter{Log: quietLogger()}}
-	r := NewRegistry(w, Config{IdleTimeout: time.Minute}, quietLogger())
+	r := NewRegistry(w, nil, Config{IdleTimeout: time.Minute}, quietLogger())
 	now := time.Now()
 
 	r.Handle(loadFixture(t, "hello"), now)
@@ -418,7 +418,7 @@ func (w *tagWriter) Open(rid string, channels []string, tags map[string]string,
 // dataset, so they have to reach the stream.
 func TestHelloTagsReachTheWriter(t *testing.T) {
 	w := &tagWriter{LogWriter: LogWriter{Log: quietLogger()}}
-	r := NewRegistry(w, Config{IdleTimeout: time.Minute}, quietLogger())
+	r := NewRegistry(w, nil, Config{IdleTimeout: time.Minute}, quietLogger())
 
 	r.Handle(loadFixture(t, "hello"), time.Now())
 	want := map[string]string{"model": "A", "execution-id": "7"}

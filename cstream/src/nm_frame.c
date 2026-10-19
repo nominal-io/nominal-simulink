@@ -193,13 +193,24 @@ size_t nm_frame_encode_hello(uint8_t *buf, size_t buf_len,
                              const char *dataset_rid,
                              const char *const *channel_names,
                              size_t channel_count,
-                             const nm_tag *tags, size_t tag_count)
+                             const nm_tag *tags, size_t tag_count,
+                             const nm_frame_run *run)
 {
+    static const nm_frame_run no_run = { NM_FRAME_RUN_NONE, 0, 0, "", "" };
     size_t at, rid_len, i;
 
+    if (run == NULL) {
+        run = &no_run;
+    }
     if (buf == NULL || dataset_rid == NULL || channel_names == NULL ||
         channel_count == 0 || channel_count > NM_FRAME_MAX_CHANNELS ||
         tag_count > NM_FRAME_MAX_TAGS || (tag_count > 0 && tags == NULL)) {
+        return 0;
+    }
+    if (run->mode > NM_FRAME_RUN_SHARED || run->tag_count > tag_count ||
+        run->title == NULL || run->ref_name == NULL ||
+        (run->mode != NM_FRAME_RUN_NONE &&
+         (run->title[0] == '\0' || run->ref_name[0] == '\0'))) {
         return 0;
     }
     rid_len = strlen(dataset_rid);
@@ -267,7 +278,33 @@ size_t nm_frame_encode_hello(uint8_t *buf, size_t buf_len,
         }
     }
 
-    return at;
+    if (at + 1 + 8 + 2 > buf_len) {
+        return 0;
+    }
+    buf[at] = (uint8_t)run->mode;
+    at += 1;
+    put_u64(buf + at, (uint64_t)run->start_nanos);
+    at += 8;
+    put_u16(buf + at, (uint16_t)run->tag_count);
+    at += 2;
+    at = put_string(buf, buf_len, at, run->title, NM_FRAME_MAX_NAME_BYTES);
+    if (at == 0) {
+        return 0;
+    }
+    return put_string(buf, buf_len, at, run->ref_name, NM_FRAME_MAX_NAME_BYTES);
+}
+
+size_t nm_frame_encode_end(uint8_t *buf, size_t buf_len,
+                           uint64_t session_id, uint64_t config_id, int64_t end_nanos)
+{
+    size_t at;
+
+    if (buf == NULL || buf_len < NM_FRAME_HEADER_BYTES + 8) {
+        return 0;
+    }
+    at = write_header(buf, buf_len, NM_FRAME_END, session_id, config_id);
+    put_u64(buf + at, (uint64_t)end_nanos);
+    return at + 8;
 }
 
 size_t nm_frame_encode_data(uint8_t *buf, size_t buf_len,
@@ -347,7 +384,7 @@ int nm_frame_decode_header(const uint8_t *buf, size_t len, nm_frame_header *out)
     if (buf[4] != NM_FRAME_VERSION) {
         return -3;
     }
-    if (buf[5] != NM_FRAME_HELLO && buf[5] != NM_FRAME_DATA) {
+    if (buf[5] != NM_FRAME_HELLO && buf[5] != NM_FRAME_DATA && buf[5] != NM_FRAME_END) {
         return -4;
     }
 
@@ -446,6 +483,37 @@ int nm_frame_decode_hello(const uint8_t *buf, size_t len, nm_frame_hello *out)
         }
     }
     out->tag_count = count;
+
+    if (at + 1 + 8 + 2 > len) {
+        return -1;
+    }
+    out->run_mode = buf[at];
+    at += 1;
+    out->run_start = (int64_t)get_u64(buf + at);
+    at += 8;
+    out->run_tag_count = get_u16(buf + at);
+    at += 2;
+    if (out->run_mode > NM_FRAME_RUN_SHARED || out->run_tag_count > out->tag_count ||
+        read_string(buf, len, &at, &out->run_title) != 0 ||
+        read_string(buf, len, &at, &out->ref_name) != 0) {
+        return -1;
+    }
+    if (out->run_mode != NM_FRAME_RUN_NONE &&
+        (out->run_title.len == 0 || out->ref_name.len == 0)) {
+        return -1;
+    }
+    return 0;
+}
+
+int nm_frame_decode_end(const uint8_t *buf, size_t len, int64_t *end_nanos)
+{
+    nm_frame_header h;
+
+    if (end_nanos == NULL || nm_frame_decode_header(buf, len, &h) != 0 ||
+        h.type != NM_FRAME_END || len < NM_FRAME_HEADER_BYTES + 8) {
+        return -1;
+    }
+    *end_nanos = (int64_t)get_u64(buf + NM_FRAME_HEADER_BYTES);
     return 0;
 }
 

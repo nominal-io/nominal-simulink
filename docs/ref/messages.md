@@ -50,11 +50,11 @@ dialog. The rest appear when the run starts.
 `in proxy mode, Proxy host can't be empty and Proxy port must be from 1 to 65535.`
 : Set both to the address `nmproxy` listens on.
 
-`in proxy mode, the dataset RID, channel names and tags have to fit in one 1400-byte packet to the relay, and these don't. Use fewer or shorter channel names or tags.`
-: The block sends its whole channel list and its tags to the relay in one packet, and they
-  don't fit: there are too many channels or tags, or the names are too long.
-  [Limits in proxy mode](block.md#limits-in-proxy-mode) gives the exact rule. Splitting the
-  signals across two blocks also works, as does direct mode.
+`in proxy mode, the dataset RID, channel names, tags and run title have to fit in one 1400-byte packet to the relay, and these don't. Use fewer or shorter channel names or tags, or a shorter run title.`
+: The block sends its whole channel list, its tags and the run's title to the relay in one
+  packet, and they don't fit: there are too many channels or tags, or the names or the title are
+  too long. [Limits in proxy mode](block.md#limits-in-proxy-mode) gives the exact rule. Splitting
+  the signals across two blocks also works, as does direct mode.
 
 `could not set up sending to Proxy host '<host>'. Check that the name or address is right.`
 : In proxy mode, **Proxy host** didn't resolve to an address.
@@ -150,9 +150,11 @@ lost after that shows up only in [the relay's log](nmproxy.md#log).
 
 ## The run in Nominal
 
-With **Create run** on, the block warns when Nominal doesn't take a run request, and the model
-carries on. The reason in parentheses is either `HTTP status <status>:` followed by the start
-of Nominal's error, or why the computer couldn't reach the profile's `base_url`.
+With **Create run** on in direct mode, the block warns when Nominal doesn't take a run request,
+and the model carries on. The reason in parentheses is either `HTTP status <status>:` followed by
+the start of Nominal's error, or why the computer couldn't reach the profile's `base_url`. In
+proxy mode the relay makes the run requests, and reports a failure in
+[its log](nmproxy.md#other-messages) instead.
 
 `could not create the run '<title>' (<reason>). The rows still go to the dataset.`
 : Appears as the run starts. The rows reach the dataset, and a run can be made over them in

@@ -4,7 +4,8 @@
 // It exists so that a host with no performance headroom can still stream: in proxy mode
 // the host sends compact datagrams and this process does the protobuf encoding, TLS and
 // HTTP that the host would otherwise have paid for. The host also stops needing a
-// credential — the dataset RID travels in the frames, the token lives only here.
+// credential — the dataset RID travels in the frames, and the API key is in a profile on
+// this computer only.
 package main
 
 import (
@@ -56,10 +57,14 @@ func run(configPath string) error {
 	// The dry-run writer is not only a test double: it answers "are frames arriving and
 	// do they decode sensibly?" without a token or any egress, which is the first thing
 	// worth knowing when a deployment is not working.
-	var writer proxy.Writer
+	var (
+		writer proxy.Writer
+		runs   proxy.Runs
+	)
 	if cfg.DryRun {
 		log.Info("dry run: frames will be decoded and reported, nothing written")
 		writer = &proxy.LogWriter{Log: log, Verbose: cfg.LogLevel == "debug"}
+		runs = &proxy.LogRuns{Log: log}
 	} else {
 		nw, err := proxy.NewNominalWriter(cfg, log)
 		if err != nil {
@@ -67,10 +72,11 @@ func run(configPath string) error {
 		}
 		defer nw.Close()
 		writer = nw
-		log.Info("writing to Nominal", "base_url", cfg.Nominal.BaseURL)
+		runs = proxy.NewNominalRuns(cfg.Nominal, log)
+		log.Info("writing to Nominal", "profile", cfg.Profile, "base_url", cfg.Nominal.BaseURL)
 	}
 
-	registry := proxy.NewRegistry(writer, cfg, log)
+	registry := proxy.NewRegistry(writer, runs, cfg, log)
 	server, err := proxy.NewServer(cfg, registry, log)
 	if err != nil {
 		return err

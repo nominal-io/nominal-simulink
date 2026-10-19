@@ -105,6 +105,17 @@ typedef struct {
     const nm_tag *tags;
     size_t        tag_count;
 
+    /* PROXY only. A run for the relay to create when the stream opens and to end when it
+     * closes, as nm_run_begin and nm_run_end do in DIRECT mode. NULL or "" run_title asks
+     * for none. The run starts at run_start_nanos and shows the dataset's points with the
+     * first run_tag_count tags, under run_ref_name. run_shared asks for one run per title,
+     * as nm_run_config's shared does. Copied at open. */
+    const char *run_title;
+    const char *run_ref_name;
+    size_t      run_tag_count;
+    int64_t     run_start_nanos;
+    int         run_shared;
+
     /* Rows of capacity to reserve. One row is one timestamp plus one value per
      * channel. The buffer never grows past this: nm_push discards rows instead. Size
      * it for the longest network stall worth surviving — at 1 kHz, 60000 rows is a
@@ -192,7 +203,8 @@ uint64_t nm_dropped_rows(const nm_stream *s);
  * Flush what is buffered, stop the sender thread, and release everything.
  *
  * This blocks until the outstanding rows have been sent or have failed, or until
- * close_timeout_ms has passed, so it must not be called from a real-time context.
+ * close_timeout_ms has passed, so it must not be called from a real-time context. In
+ * PROXY mode it then tells the relay the stream has ended, which takes another 100 ms.
  * Passing NULL is a no-op.
  */
 void nm_close(nm_stream *s);

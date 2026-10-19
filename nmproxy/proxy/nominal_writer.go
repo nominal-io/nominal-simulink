@@ -27,15 +27,10 @@ type NominalWriter struct {
 	streams []*nominalStream
 }
 
+// NewNominalWriter writes with the API key and base URL in cfg.Nominal, the profile
+// LoadConfig read.
 func NewNominalWriter(cfg Config, log *slog.Logger) (*NominalWriter, error) {
-	opts := []nominal.Option{}
-	if cfg.Nominal.BaseURL != "" {
-		// Worth passing explicitly: a RID from one environment does not resolve
-		// against another, and the default is production.
-		opts = append(opts, nominal.WithBaseURL(cfg.Nominal.BaseURL))
-	}
-
-	client, err := nominal.NewClient(cfg.Nominal.Token, opts...)
+	client, err := nominal.NewClient(cfg.Nominal.Token, nominal.WithBaseURL(cfg.Nominal.BaseURL))
 	if err != nil {
 		return nil, fmt.Errorf("creating the Nominal client: %w", err)
 	}

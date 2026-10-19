@@ -15,7 +15,8 @@ protocol version it uses, such as `nmproxy 0.1.0, frame protocol version 1`, and
 relay built with a plain `go build` reports its release as `dev`.
 
 `nmproxy` runs until it gets Ctrl+C or `SIGTERM`. It then sends the rows it still holds to
-Nominal, logs a `shutting down` line with totals for the whole run, and exits.
+Nominal, sets the end of each run whose execution is still sending, logs a `shutting down` line
+with totals, and exits.
 
 ## Configuration file
 
@@ -27,12 +28,17 @@ The file is YAML. A key the relay doesn't know stops it at startup. Each release
   `0.0.0.0` accepts packets on every network interface, and `127.0.0.1` only from the same
   computer.
 
-`nominal.base_url`
-: Default `"https://api.gov.nominal.io/api"`, the standard cloud instance. The REST API base URL
-  of your Nominal instance: the **API URL** on your organization's **API keys** page.
+`profile`
+: Default `"default"`. The profile in Nominal's config file to read the API key and the
+  instance's REST API base URL from, as its `token` and `base_url`. Runs go in the profile's
+  `workspace_rid`, or in the organization's default workspace when it has none. It is the same
+  file the block reads in direct mode, and Nominal's other clients too.
+  [API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows what the file holds.
 
-`nominal.token`
-: An API key. Required unless `dry_run` is `true`.
+`profile_file`
+: Default `""`, the standard location in the home folder of the account running the relay:
+  `~/.config/nominal/config.yml`, or `%USERPROFILE%\.config\nominal\config.yml` on Windows.
+  The path of the config file to read `profile` from, when it is somewhere else.
 
 `allowed_datasets`
 : Default empty. The RIDs of the datasets the relay may write to. Data for any other dataset is
@@ -52,17 +58,17 @@ The file is YAML. A key the relay doesn't know stops it at startup. Each release
   row.
 
 `dry_run`
-: Default `false`. When `true`, the relay decodes and logs what arrives without writing anything
-  to Nominal, and needs no `nominal.token` or `allowed_datasets`.
+: Default `false`. When `true`, the relay decodes and logs what arrives, and the runs it would
+  make, without writing anything to Nominal. It then reads no profile and needs no
+  `allowed_datasets`.
 
 A complete file:
 
 ```yaml
 listen: "0.0.0.0:15400"
 
-nominal:
-  base_url: "<API URL>"
-  token: "<API key>"
+profile: "default"
+profile_file: ""
 
 allowed_datasets:
   - "<dataset RID>"
@@ -83,8 +89,13 @@ startup.
 | `reading <path>: …` | The file named by `-config` doesn't exist or can't be read. |
 | `parsing <path>: …` | The file isn't valid YAML, or has a key the relay doesn't know. |
 | `<path>: listen is required` | `listen` is set to an empty string. |
-| `<path>: nominal.token is not set. Set it to a Nominal API key, or set dry_run to true` | No API key, and `dry_run` isn't `true`. |
-| `<path>: nominal.base_url is required` | `nominal.base_url` is set to an empty string, and `dry_run` isn't `true`. |
+| `<path>: profile is empty. Name a profile in your Nominal config file, or remove the key to use the one named default` | `profile` is set to an empty string, and `dry_run` isn't `true`. |
+| `finding the Nominal config file: …. Set profile_file to its path` | `profile_file` is empty, and the account running the relay has no home folder. |
+| `reading the Nominal config file <file>: …. Create it with a profile holding your API key and base URL, or set profile_file to where yours is` | There is no config file at `<file>`, or it can't be opened. |
+| `parsing the Nominal config file <file>: …` | The config file isn't valid YAML. |
+| `the Nominal config file <file> has no profile named "<profile>". Check profile, or add the profile to the file` | The file has profiles, but not that one. Profile names are case-sensitive. |
+| `profile "<profile>" in <file> has no token. Add your API key to it as token` | The profile has no `token`, or it is `null`. |
+| `profile "<profile>" in <file> has no base_url. Add your instance's API URL to it as base_url` | The profile has no `base_url`. It is the **API URL** on your organization's **API keys** page. |
 | `<path>: idle_timeout cannot be negative` | `idle_timeout` is below zero. |
 | `<path>: idle_timeout must be greater than zero. Remove it to use the default of 5 minutes` | `idle_timeout` is zero. |
 | `<path>: log_level "<level>" is not one of debug, info, warn, error` | `log_level` has another value. |
@@ -98,8 +109,8 @@ startup.
 `allowed_datasets is empty, so any sender that can reach the listening port can write to any dataset the API key can. List your dataset RIDs under allowed_datasets.`
 : The message says what to do.
 
-`<path> holds an API key and other accounts have access to it (mode <mode>). Run chmod 600 on it.`
-: Linux and macOS only.
+`<file> holds an API key and other accounts have access to it (mode <mode>). Run chmod 600 on it.`
+: About Nominal's config file. Linux and macOS only.
 
 `could not enlarge the receive buffer, so the operating system may drop bursts of frames`
 : Packets arriving in bursts may be lost before the relay reads them, and show up as `gaps`.
@@ -126,7 +137,7 @@ time=<time> level=INFO msg=stats configs=1 sessions=1 rows=30000 gaps=0 reorders
 | Field | Counts |
 |---|---|
 | `configs` | Channel lists the relay has registered, one per dataset, list of channel names and set of tags. |
-| `sessions` | Model runs the relay is tracking. |
+| `sessions` | Executions of a model the relay is tracking. |
 | `rows` | Rows received. |
 | `gaps` | Packets that were missing when a later packet arrived. |
 | `reorders` | Packets that arrived after a later one, or twice. A late packet was already counted in `gaps` when the later one arrived. |
@@ -144,12 +155,20 @@ datasets that aren't in `allowed_datasets`.
 | Message | Level | Meaning |
 |---|---|---|
 | `listening` | INFO | The relay started, with its address. |
-| `writing to Nominal` | INFO | The relay will write to `base_url`. |
+| `writing to Nominal` | INFO | The relay will write with the API key in `profile`, to its `base_url`. |
 | `dry run: frames will be decoded and reported, nothing written` | INFO | `dry_run` is `true`. |
 | `configuration registered` | INFO | A block started sending a new channel list, with its dataset and number of channels. |
 | `stream opened` | INFO | The relay opened a stream to the dataset. |
 | `stream opened (dry run: nothing will be written)` | INFO | As above, in a dry run. |
-| `session started` | INFO | A model run started sending data. |
+| `session started` | INFO | An execution of a model started sending. |
+| `session ended` | INFO | An execution stopped and sent END, with its totals. Logged once, though the block sends END three times. |
+| `run created` | INFO | The relay created the run an execution asked for, with its RID and title. |
+| `run found` | INFO | An execution asked for a run shared with other executions, and the relay found it. |
+| `run ended` | INFO | The relay set the end of an execution's run. |
+| `run (dry run: not created)` | INFO | In a dry run, the run an execution asked for. |
+| `run end (dry run: not set)` | INFO | In a dry run, the end the relay would set. |
+| `could not create the run. The rows still go to the dataset.` | WARN | Creating or finding the run failed, and the error says why: `HTTP status <status>:` and the start of Nominal's error, or why the relay couldn't reach `base_url`. A run can be made over the rows in the Nominal app. |
+| `could not set the end of the run` | WARN | Setting the run's end failed, and the error says why. The run exists, with no end time, and its end can be set in the Nominal app. |
 | `dropping data for a configuration with no accepted HELLO` | INFO | Data arrived for a channel list the relay hasn't registered. Logged once. |
 | `refusing a dataset that is not in allowed_datasets. Add its RID to allowed_datasets if nmproxy should write to it.` | WARN | A block is sending to a dataset that isn't listed. Logged once for each refused dataset, for up to 100 datasets. |
 | `rejecting frames that use another frame protocol version. Use an nmproxy release that speaks the sender's version (see nmproxy -version).` | WARN | The blockset and the relay come from different releases. Logged on the first such packet and every 1000th after. |
@@ -160,7 +179,7 @@ datasets that aren't in `allowed_datasets`.
 | `write failed` | ERROR | Writing to Nominal failed, with the dataset and the error. Logged on a stream's first failure and every 100th after. |
 | `stream closed with errors` | WARN | A stream closed after some of its writes failed, with the number of failures and the last error. |
 | `stream closed` | INFO | A stream closed with no write failures reported. |
-| `session idle, forgetting it` | INFO | A run sent nothing for `idle_timeout`. |
+| `session idle, forgetting it` | INFO | An execution sent nothing for `idle_timeout`. When it sent no END, the relay ends its run here, at the newest row it received. |
 | `configuration idle, closing its stream` | INFO | A channel list went unheard for `idle_timeout`. |
 | `closing an idle stream failed` | ERROR | Sending the last rows of an idle stream failed. |
 | `closing a stream failed` | ERROR | At shutdown, sending a stream's last rows failed. |

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"sync"
@@ -14,12 +15,14 @@ import (
 //	config_id  identifies a *configuration* — a dataset and an ordered channel list.
 //	           It is what a DATA frame is resolved through, and what a stream is opened
 //	           for. Two runs of the same model share one.
-//	session_id identifies a *run*. Sequence numbers are per session, so gap detection
-//	           is too. Tracked per configuration, two runs of one model streaming at
-//	           once would look like one session with wildly out-of-order sequences.
+//	session_id identifies an *execution* of a model. Sequence numbers are per session,
+//	           so gap detection is too. Tracked per configuration, two executions
+//	           streaming at once would look like one session with wildly out-of-order
+//	           sequences. The run in Nominal, when a HELLO asks for one, is per session
+//	           too.
 //
 // Conflating them would mean either losing gap detection when a model restarts, or
-// opening a redundant stream per run.
+// opening a redundant stream per execution.
 
 type config struct {
 	id       uint64
@@ -43,14 +46,47 @@ type session struct {
 
 	rows     uint64
 	lastSeen time.Time
+
+	lastTS  int64 // the newest row's timestamp
+	hasRows bool
+
+	run   *runState // nil until a HELLO asks for a run
+	ended bool      // an END arrived
+}
+
+// endNanos is when the session's data ends: its newest row, or the run's start if it sent
+// none.
+func (s *session) endNanos() int64 {
+	if s.hasRows || s.run == nil {
+		return s.lastTS
+	}
+	return s.run.spec.StartNanos
+}
+
+// runState is a session's run. A goroutine creates it, then waits on end for the time the
+// run ends.
+type runState struct {
+	spec RunSpec
+	end  chan int64 // holds one value
+	once sync.Once
+}
+
+// finish hands the run its end. Only the first call counts, so the first END, an idle
+// session or shutdown can each end it, and it ends once.
+func (rs *runState) finish(endNanos int64) {
+	rs.once.Do(func() { rs.end <- endNanos })
 }
 
 // Registry maps frames onto open streams and holds the proxy's configuration and session
 // state.
 type Registry struct {
 	writer Writer
+	runs   Runs // nil makes no runs
 	log    *slog.Logger
 	cfg    Config
+
+	// The goroutines creating and ending runs, so Close can wait for them.
+	runsActive sync.WaitGroup
 
 	// How long a configuration or session may go unheard before it is evicted. Without
 	// this a long-lived daemon accumulates a stream per model run forever.
@@ -82,13 +118,14 @@ type Registry struct {
 	retiredReorders uint64
 }
 
-func NewRegistry(w Writer, cfg Config, log *slog.Logger) *Registry {
+func NewRegistry(w Writer, runs Runs, cfg Config, log *slog.Logger) *Registry {
 	idle := cfg.IdleTimeout
 	if idle <= 0 {
 		idle = 5 * time.Minute
 	}
 	return &Registry{
 		writer:      w,
+		runs:        runs,
 		cfg:         cfg,
 		log:         log,
 		idleTimeout: idle,
@@ -129,6 +166,8 @@ func (r *Registry) Handle(buf []byte, now time.Time) {
 		r.handleHello(buf, now)
 	case frame.TypeData:
 		r.handleData(buf, now)
+	case frame.TypeEnd:
+		r.handleEnd(buf, now)
 	}
 }
 
@@ -180,9 +219,24 @@ func (r *Registry) handleHello(buf []byte, now time.Time) {
 		// The expected case: HELLO repeats about once a second, so almost every one
 		// is a refresh of something already known.
 		c.lastSeen = now
+	} else if !r.register(hello, now) {
 		return
 	}
 
+	// HELLO keeps a session alive while its model is paused and sends no data.
+	s := r.session(hello.SessionID, hello.ConfigID)
+	s.lastSeen = now
+
+	// Every HELLO of a session repeats its run, so only the first makes one. A session
+	// that has ended makes none.
+	if s.run == nil && !s.ended && hello.Run.Mode != frame.RunNone && r.runs != nil {
+		r.startRun(s, hello)
+	}
+}
+
+// register opens a stream for a configuration it hasn't seen. It must be called with the
+// lock held.
+func (r *Registry) register(hello *frame.Hello, now time.Time) bool {
 	tags := make(map[string]string, len(hello.Tags))
 	for _, tag := range hello.Tags {
 		tags[tag.Key] = tag.Value
@@ -192,7 +246,7 @@ func (r *Registry) handleHello(buf []byte, now time.Time) {
 		r.writeErrors++
 		r.log.Error("could not open a stream for a new configuration",
 			"dataset", hello.DatasetRID, "error", err)
-		return
+		return false
 	}
 
 	r.configs[hello.ConfigID] = &config{
@@ -205,6 +259,91 @@ func (r *Registry) handleHello(buf []byte, now time.Time) {
 	r.log.Info("configuration registered",
 		"config", hello.ConfigID, "dataset", hello.DatasetRID,
 		"channels", len(hello.Channels))
+	return true
+}
+
+// session returns the session with this id, starting one if it is new. It must be called
+// with the lock held.
+func (r *Registry) session(id, configID uint64) *session {
+	s, ok := r.sessions[id]
+	if !ok {
+		s = &session{id: id, configID: configID}
+		r.sessions[id] = s
+		r.log.Info("session started", "session", id, "config", configID)
+	}
+	return s
+}
+
+// startRun creates the session's run in the background, so the receive loop never waits
+// on Nominal. It must be called with the lock held.
+func (r *Registry) startRun(s *session, hello *frame.Hello) {
+	s.run = &runState{
+		spec: RunSpec{
+			Title:      hello.Run.Title,
+			DatasetRID: hello.DatasetRID,
+			RefName:    hello.Run.RefName,
+			Tags:       hello.Tags[:hello.Run.TagCount],
+			StartNanos: hello.Run.StartNanos,
+			Shared:     hello.Run.Mode == frame.RunShared,
+			Session:    s.id,
+		},
+		end: make(chan int64, 1),
+	}
+	r.runsActive.Add(1)
+	go r.runLifetime(s.run)
+}
+
+// runLifetime creates a run, waits for its session to end, then sets its end. A run that
+// can't be created only costs the run: the rows still go to the dataset.
+func (r *Registry) runLifetime(rs *runState) {
+	defer r.runsActive.Done()
+	ctx := context.Background()
+
+	rid, err := r.runs.Begin(ctx, rs.spec)
+	if err != nil {
+		r.log.Warn("could not create the run. The rows still go to the dataset.",
+			"title", rs.spec.Title, "session", rs.spec.Session, "error", err)
+		return
+	}
+
+	// Nominal needs the end after the start.
+	end := <-rs.end
+	if end <= rs.spec.StartNanos {
+		end = rs.spec.StartNanos + 1
+	}
+	if err := r.runs.End(ctx, rs.spec, rid, end); err != nil {
+		r.log.Warn("could not set the end of the run",
+			"run", rid, "title", rs.spec.Title, "session", rs.spec.Session, "error", err)
+	}
+}
+
+// handleEnd ends a session's run. Senders repeat END, so only the first counts.
+func (r *Registry) handleEnd(buf []byte, now time.Time) {
+	end, err := frame.DecodeEnd(buf)
+	if err != nil {
+		r.mu.Lock()
+		r.badFrames++
+		r.mu.Unlock()
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	// One for a session the relay doesn't know, such as one that ended before the relay
+	// started, has nothing to end.
+	s, ok := r.sessions[end.SessionID]
+	if !ok || s.ended || s.configID != end.ConfigID {
+		return
+	}
+	s.ended = true
+	s.lastSeen = now
+	r.log.Info("session ended",
+		"session", s.id, "rows", s.rows, "gaps", s.gaps, "reorders", s.reorders)
+	// The sender's end, not the newest row here: rows lost on the way still count.
+	if s.run != nil {
+		s.run.finish(end.EndNanos)
+	}
 }
 
 func (r *Registry) handleData(buf []byte, now time.Time) {
@@ -242,17 +381,17 @@ func (r *Registry) handleData(buf []byte, now time.Time) {
 		return
 	}
 
-	s, ok := r.sessions[data.SessionID]
-	if !ok {
-		s = &session{id: data.SessionID, configID: data.ConfigID}
-		r.sessions[data.SessionID] = s
-		r.log.Info("session started", "session", data.SessionID, "config", data.ConfigID)
-	}
+	s := r.session(data.SessionID, data.ConfigID)
 	r.trackSequence(s, data.Sequence)
 
 	c.lastSeen = now
 	s.lastSeen = now
 	s.rows += uint64(len(data.Rows))
+	for _, row := range data.Rows {
+		if !s.hasRows || row.TimestampNanos > s.lastTS {
+			s.lastTS, s.hasRows = row.TimestampNanos, true
+		}
+	}
 	stream := c.stream
 
 	r.mu.Unlock()
@@ -374,6 +513,10 @@ func (r *Registry) Sweep(now time.Time) {
 		if now.Sub(s.lastSeen) > r.idleTimeout {
 			r.log.Info("session idle, forgetting it",
 				"session", id, "rows", s.rows, "gaps", s.gaps, "reorders", s.reorders)
+			// Every END was lost, so the run ends at the newest row that arrived.
+			if s.run != nil {
+				s.run.finish(s.endNanos())
+			}
 			r.retire(s)
 			delete(r.sessions, id)
 		}
@@ -396,7 +539,8 @@ func (r *Registry) Sweep(now time.Time) {
 	}
 }
 
-// Close flushes and releases everything. Streams are closed so buffered rows land.
+// Close flushes and releases everything. Streams are closed so buffered rows land, and
+// the runs of sessions still going end at their newest row.
 func (r *Registry) Close() {
 	r.mu.Lock()
 	streams := make([]Stream, 0, len(r.configs))
@@ -405,6 +549,9 @@ func (r *Registry) Close() {
 	}
 	// Retired rather than dropped, so the totals logged at shutdown still include them.
 	for _, s := range r.sessions {
+		if s.run != nil {
+			s.run.finish(s.endNanos())
+		}
 		r.retire(s)
 	}
 	r.configs = map[uint64]*config{}
@@ -416,4 +563,7 @@ func (r *Registry) Close() {
 			r.log.Error("closing a stream failed", "error", err)
 		}
 	}
+
+	// So the relay doesn't exit with a run request still on its way.
+	r.runsActive.Wait()
 }

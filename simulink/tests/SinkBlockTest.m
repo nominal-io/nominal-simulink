@@ -197,6 +197,40 @@ classdef SinkBlockTest < BlocksetTestCase
             tc.verifySubstring(SinkBlockTest.runError(model), 'Ref name is empty');
         end
 
+        function proxyModeAsksTheRelayForTheRun(tc)
+            % In proxy mode the relay makes the run, so the HELLO has to carry all of it,
+            % and END has to say when the execution's rows end. END goes three times, since
+            % UDP can lose any one.
+            [model, blk] = SinkBlockTest.proxyModel('nm_sink_proxyrun');
+            set_param(blk, 'createRun', 'One per execution', 'executionId', '7', ...
+                'timeMode', 'Directly record simulation time (t0=0)');
+            frames = SinkBlockTest.capture(tc, blk, @() sim(model));
+
+            hello = frames(strcmp({frames.type}, 'hello'));
+            tc.assertNotEmpty(hello, 'the block sent no HELLO.');
+            tc.verifyEqual(hello(1).run, struct('mode', 'own', 'start', int64(0), ...
+                'tagCount', 1, 'title', 'nm_sink_proxyrun, execution 7', 'refName', 'default'));
+
+            data = frames(strcmp({frames.type}, 'data'));
+            ends = frames(strcmp({frames.type}, 'end'));
+            tc.assertNotEmpty(data, 'the block sent no rows.');
+            tc.verifyNumElements(ends, 3);
+            tc.verifyEqual([ends.endTime], repmat(max(vertcat(data.timestamps)), 1, numel(ends)));
+        end
+
+        function aProxyRunPerModelLeavesOutTheExecutionId(tc)
+            % Every execution's points are in a run per model, so it shows the Tags field's
+            % tags and not the execution ID, which comes last.
+            [model, blk] = SinkBlockTest.proxyModel('nm_sink_proxymodel');
+            set_param(blk, 'createRun', 'One per model', 'tags', '["model" "A"]');
+            frames = SinkBlockTest.capture(tc, blk, @() sim(model));
+
+            hello = frames(strcmp({frames.type}, 'hello'));
+            tc.assertNotEmpty(hello, 'the block sent no HELLO.');
+            tc.verifyEqual({hello(1).run.mode, hello(1).run.tagCount, hello(1).run.title}, ...
+                {'shared', 1, 'nm_sink_proxymodel'});
+        end
+
         function runsInAcceleratorMode(tc)
             % Accelerator mode compiles the model into a MEX of its own, which calls back
             % into the S-function. It needs no Simulink Coder licence, so any user can
@@ -250,7 +284,7 @@ classdef SinkBlockTest < BlocksetTestCase
             set_param(blk, 'proxyPort', num2str(sock.getLocalPort()));
             run();
 
-            frames = struct('type', {}, 'tags', {}, 'timestamps', {});
+            frames = struct('type', {}, 'tags', {}, 'timestamps', {}, 'run', {}, 'endTime', {});
             pkt = java.net.DatagramPacket(zeros(1, 1500, 'int8'), 1500);
             while true
                 try
@@ -262,7 +296,9 @@ classdef SinkBlockTest < BlocksetTestCase
                 f = nmframe_decode(bytes(1:pkt.getLength()));
                 frames(end + 1) = struct('type', f.type, ...
                     'tags', {fieldOr(f, 'tags')}, ...
-                    'timestamps', fieldOr(f, 'timestamps')); %#ok<AGROW>
+                    'timestamps', fieldOr(f, 'timestamps'), ...
+                    'run', fieldOr(f, 'run'), ...
+                    'endTime', fieldOr(f, 'endTime')); %#ok<AGROW>
             end
         end
 

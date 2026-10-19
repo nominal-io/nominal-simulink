@@ -4,23 +4,34 @@ function frame = nmframe_decode(bytes)
 %   frame = NMFRAME_DECODE(bytes) takes a uint8 row vector — the payload of one UDP
 %   datagram — and returns a struct describing it.
 %
-%   Common to both frame types:
-%       .type        'hello' or 'data'
+%   Common to every frame type:
+%       .type        'hello', 'data' or 'end'
 %       .version     protocol version byte
-%       .sessionId   uint64, identifies one run
-%       .configId    uint64, identifies a dataset and channel list
+%       .sessionId   uint64, identifies one execution of a model
+%       .configId    uint64, identifies a dataset, channel list and tags
 %
 %   HELLO adds:
 %       .datasetRid  char
 %       .channels    cellstr, in order
 %       .tags        N-by-2 cell array of char, one {key, value} row per tag, in order.
 %                    Every channel carries them.
+%       .run         the run to make for the session, a struct with
+%                      .mode      'none', 'own' for a run of its own, or 'shared' for
+%                                 one run for every session with this title
+%                      .start     int64, nanoseconds since the Unix epoch
+%                      .tagCount  the run shows the points with the first this-many tags
+%                      .title     char
+%                      .refName   char, the name the dataset goes under in the run
 %
 %   DATA adds:
 %       .sequence    uint64, increases by one per DATA frame within a session. A
 %                    skipped value means a frame was lost or is arriving late.
 %       .timestamps  int64 column, nanoseconds since the Unix epoch
 %       .values      double matrix, one row per sample, one column per channel
+%
+%   END adds:
+%       .endTime     int64, nanoseconds since the Unix epoch: the newest row's timestamp.
+%                    A sender sends END several times, so act on the first.
 %
 %   Throws if the datagram is malformed. Callers receiving from a network should catch
 %   that rather than let it stop a receive loop: these bytes are unauthenticated, so
@@ -67,6 +78,10 @@ function frame = nmframe_decode(bytes)
         case 2
             frame.type = 'data';
             [frame, ~] = decodeData(frame, bytes, at);
+        case 3
+            frame.type = 'end';
+            requireBytes(bytes, at, 8, 'the end time');
+            frame.endTime = typecast(bytes(at:at+7), 'int64');
         otherwise
             error('nmframe:type', 'unknown frame type %d', bytes(6));
     end
@@ -100,6 +115,25 @@ function [frame, at] = decodeHello(frame, bytes, at)
         end
         [frame.tags{i, 2}, at] = readString(bytes, at);
     end
+
+    MODES = {'none', 'own', 'shared'};
+    requireBytes(bytes, at, 11, 'the run');
+    mode = bytes(at);
+    if mode > 2
+        error('nmframe:malformed', 'HELLO asks for run mode %d', mode);
+    end
+    run.mode     = MODES{mode + 1};
+    run.start    = typecast(bytes(at+1:at+8), 'int64');
+    [run.tagCount, at] = readU16(bytes, at + 9);
+    [run.title, at]    = readString(bytes, at);
+    [run.refName, at]  = readString(bytes, at);
+    if run.tagCount > count
+        error('nmframe:malformed', 'HELLO''s run shows %d tags of %d', run.tagCount, count);
+    end
+    if mode ~= 0 && (isempty(run.title) || isempty(run.refName))
+        error('nmframe:malformed', 'HELLO asks for a run with no title or ref name');
+    end
+    frame.run = run;
 end
 
 function [frame, at] = decodeData(frame, bytes, at)

@@ -68,14 +68,16 @@ in direct mode, and **Run title** and **Ref name** when **Create run** is **None
   file to read **Profile** from, when it is somewhere else.
 
 **Create run**
-: Default **None**. Direct mode only. **One per execution** creates a run in Nominal when each
-  run of the model starts, so it can be watched live, and sets the run's end once the last row
-  is sent. The run shows the dataset's points with this execution's tags, **Execution ID**
-  included. **One per model** shares one run between every execution with the same title: the
-  first execution creates it, later ones extend its end, and it shows the points with the tags in
-  **Tags (key and value pairs)**, so every execution's points are in it. Executions that start
-  at the same moment, such as `parsim` workers, can each create the run. When a run can't be
-  created or ended, the block warns and the rows still go to the dataset.
+: Default **None**. **One per execution** creates a run in Nominal when each run of the model
+  starts, so it can be watched live, and sets the run's end once the last row is sent. The run
+  shows the dataset's points with this execution's tags, **Execution ID** included. **One per
+  model** shares one run between every execution with the same title: the first execution creates
+  it, later ones extend its end, and it shows the points with the tags in
+  **Tags (key and value pairs)**, so every execution's points are in it. In direct mode,
+  executions that start at the same moment, such as `parsim` workers, can each create the run.
+  When a run can't be created or ended, the block warns and the rows still go to the dataset. In
+  proxy mode, `nmproxy` creates and ends the run with its own profile, and a run it can't create
+  or end shows in [its log](nmproxy.md#log) instead.
 
 **Run title**
 : Default `''`, a title made from the model's name. One per execution adds the execution ID,
@@ -129,15 +131,19 @@ The block reads this when a run starts, in direct mode only.
 ## Limits in proxy mode
 
 Each run's channel list travels to `nmproxy` in a single packet, which holds at most 1400 bytes.
-The dataset RID, the channel names and the tags have to fit:
+The dataset RID, the channel names, the tags, and with **Create run** on the run's title and
+**Ref name**, have to fit:
 
-30 + (RID length) + the sum over channels of (2 + name length) + the sum over tags of
-(4 + key length + value length) ≤ 1400
+45 + (RID length) + (run title length) + (ref name length) + the sum over channels of
+(2 + name length) + the sum over tags of (4 + key length + value length) ≤ 1400
 
-Lengths are in bytes. With a 70-character RID, 10-character names and no tags, that is 108
-channels. The RID, each name, each tag key and each tag value can be at most 256 bytes. A block
-can have at most 64 tags, and at most 169 channels however short the names are.
-[The frame protocol](frames.md#limits) has the reasoning behind these limits.
+Lengths are in bytes, and the run title and ref name count as 0 when **Create run** is **None**.
+**Execution ID** counts as a tag with the key `execution-id`, and an automatic one is 22
+characters long. With a 70-character RID, 10-character names, an automatic execution ID as the
+only tag and no run, that is 103 channels. The RID, each name, each tag key and value, the
+run title and the ref name can each be at most 256 bytes. A block can have at most 64 tags, and
+at most 169 channels however short the names are. [The frame protocol](frames.md#limits) has the
+reasoning behind these limits.
 
 A block that breaks one of the limits stops when the run starts, with
-`in proxy mode, the dataset RID, channel names and tags have to fit in one 1400-byte packet to the relay, and these don't`.
+`in proxy mode, the dataset RID, channel names, tags and run title have to fit in one 1400-byte packet to the relay, and these don't`.

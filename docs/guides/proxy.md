@@ -31,28 +31,30 @@ later.
 
 ## 2. Configure it
 
-Create `nmproxy.yaml`:
+`nmproxy` reads the API key and your instance's API URL from a profile in Nominal's config file,
+the same file the block reads in direct mode. On the relay computer, signed in as the account
+that will run `nmproxy`, create `~/.config/nominal/config.yml`
+(`%USERPROFILE%\.config\nominal\config.yml` on Windows) as
+[API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows, unless it's there already.
+
+Then create `nmproxy.yaml`:
 
 ```yaml
-nominal:
-  base_url: "<API URL>"
-  token: "<API key>"
-
 allowed_datasets:
   - "<dataset RID>"
 ```
 
-The API URL and API key come from your organization's **API keys** page, as in
-[API keys setup](site:/quickstart/quickstart/api-keys-setup/).
+`nmproxy` reads the profile named `default`. To read another, add `profile: "<profile>"`, and
+when the config file is somewhere else, `profile_file: "<path>"`.
 
 List every dataset the relay should write to under `allowed_datasets`. `nmproxy` doesn't
 authenticate senders, so without the list anything that can reach its port can write to any
 dataset your API key can. Data for a dataset that isn't listed is dropped, with the warning
 `refusing a dataset that is not in allowed_datasets`.
 
-The file holds your API key in plain text, so keep it out of version control and shared folders.
-On Linux and macOS, `nmproxy` warns at startup unless only the file's owner has access to it
-(`chmod 600`).
+Nominal's config file holds your API key in plain text, so keep it out of version control and
+shared folders. On Linux and macOS, `nmproxy` warns at startup unless only the file's owner has
+access to it (`chmod 600`).
 
 `nmproxy` listens on UDP port 15400 on every network interface. To accept packets on one
 interface only, set `listen: "<interface address>:15400"`. [nmproxy](../ref/nmproxy.md) lists
@@ -75,7 +77,12 @@ and the channel names stay as they were. The block reads no profile in proxy mod
 greys out **Profile** and **Profile file**.
 
 Run the model. `nmproxy` logs `configuration registered` with the dataset and the number of
-channels, then `session started`.
+channels, then `session started`. When the model stops, it logs `session ended`.
+
+**Create run** works in proxy mode too, as
+[Run a campaign of simulations](campaigns.md) describes. The relay then creates the run with its
+own profile and logs `run created`, and sets the run's end and logs `run ended` when the model
+stops.
 
 ## 5. Read the stats line
 
@@ -96,10 +103,11 @@ lost after that shows up only in the relay's log.
 ## Check the connection without an API key
 
 A configuration file containing only `dry_run: true` makes `nmproxy` decode and log what
-arrives, without writing anything to Nominal. A dry run needs no API key and no
-`allowed_datasets`. When the model starts sending, the log shows
-`stream opened (dry run: nothing will be written)` with the dataset and the number of channels.
-Adding `log_level: debug` logs every row.
+arrives, without writing anything to Nominal. A dry run reads no profile, so it needs no API key,
+and no `allowed_datasets`. When the model starts sending, the log shows
+`stream opened (dry run: nothing will be written)` with the dataset and the number of channels,
+and with **Create run** on, `run (dry run: not created)` with the run's title. Adding
+`log_level: debug` logs every row.
 
 ## When data doesn't reach Nominal
 
@@ -118,5 +126,9 @@ couldn't start writing to the dataset, and it logs `could not open a stream for 
 with the error. A malformed RID causes the second.
 
 When `rows` climbs but `write_errors` does too, the relay's `write failed` lines give Nominal's
-reason. Check `base_url`, the API key and the dataset RID against the **API keys** page and the
+reason. Check the profile's `base_url` and `token`, and the dataset RID, against the
+**API keys** page and the dataset.
+
+A run the relay couldn't create or end shows as a `could not create the run` or
+`could not set the end of the run` warning, with Nominal's reason. The rows still reach the
 dataset.

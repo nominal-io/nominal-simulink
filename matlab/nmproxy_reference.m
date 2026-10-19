@@ -39,6 +39,10 @@ function stats = nmproxy_reference(varargin)
 
     configs  = containers.Map('KeyType', 'char', 'ValueType', 'any');
     sessions = containers.Map('KeyType', 'char', 'ValueType', 'any');
+    % HELLO repeats every second and END is sent several times, so these remember which
+    % sessions' runs were already reported.
+    runs     = containers.Map('KeyType', 'char', 'ValueType', 'logical');
+    ended    = containers.Map('KeyType', 'char', 'ValueType', 'logical');
     stats    = struct('rows', 0, 'gaps', 0, 'reorders', 0, ...
                       'unknownConfig', 0, 'badFrames', 0, 'wrongVersion', 0);
 
@@ -114,6 +118,29 @@ function stats = nmproxy_reference(varargin)
                     fprintf('configuration registered: %s, %d channels (%s), %s\n', ...
                             frame.datasetRid, numel(frame.channels), ...
                             strjoin(frame.channels, ', '), tags);
+                end
+
+                % --- where a real relay would create the run ------------------------
+                %
+                % Once per session. A run of its own, or with 'shared' the newest run
+                % with exactly this title, showing the points with the first tagCount
+                % tags, under refName. nmproxy creates it over the REST API.
+                skey = idKey(frame.sessionId);
+                if ~strcmp(frame.run.mode, 'none') && ~runs.isKey(skey)
+                    runs(skey) = true; %#ok<NASGU>
+                    fprintf('session %s asks for a %s run: "%s", ref name %s, start %d\n', ...
+                            skey, frame.run.mode, frame.run.title, frame.run.refName, ...
+                            frame.run.start);
+                end
+                % ----------------------------------------------------------------
+
+            case 'end'
+                % Act on the first END of a session. This is where a real relay sets the
+                % end of the session's run.
+                skey = idKey(frame.sessionId);
+                if ~ended.isKey(skey)
+                    ended(skey) = true; %#ok<NASGU>
+                    fprintf('session ended: %s, end %d\n', skey, frame.endTime);
                 end
 
             case 'data'

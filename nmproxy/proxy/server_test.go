@@ -13,7 +13,7 @@ func startServer(t *testing.T) (*Registry, *net.UDPAddr, <-chan error) {
 	cfg := DefaultConfig()
 	cfg.Listen = "127.0.0.1:0"
 	cfg.StatsInterval = 0
-	r := NewRegistry(&LogWriter{Log: quietLogger()}, cfg, quietLogger())
+	r := NewRegistry(&LogWriter{Log: quietLogger()}, nil, cfg, quietLogger())
 	s, err := NewServer(cfg, r, quietLogger())
 	if err != nil {
 		t.Fatalf("starting the server: %v", err)

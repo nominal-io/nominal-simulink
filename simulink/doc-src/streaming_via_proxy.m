@@ -14,16 +14,20 @@
 % start from.
 
 %% Configure It
-% Create |nmproxy.yaml|:
+% The relay reads the API key and your instance's API URL from a profile in Nominal's
+% config file, the same file the block reads in direct mode. On the relay computer, as the
+% account that runs |nmproxy|, create |~/.config/nominal/config.yml|
+% (|%USERPROFILE%\.config\nominal\config.yml| on Windows) unless it's there already. The
+% API URL and the API key are on your organization's *API keys* page in Nominal.
 %
-%   nominal:
-%     base_url: "<API URL>"
-%     token: "<API key>"
+% Then create |nmproxy.yaml|:
 %
 %   allowed_datasets:
 %     - "<dataset RID>"
 %
-% The API URL and the API key are on your organization's *API keys* page in Nominal.
+% The relay reads the profile named |default|. To read another, add
+% |profile: "<profile>"|, and when the config file is somewhere else,
+% |profile_file: "<path>"|.
 %
 % List every dataset the relay should write to under |allowed_datasets|. The relay
 % doesn't authenticate senders, so without the list anything that can reach its port can
@@ -48,7 +52,10 @@
 % the channel names stay as they were. Proxy mode reads no profile.
 %
 % When the model runs, the relay logs |configuration registered| and then |session
-% started|. Every 30 seconds it logs a |stats| line. In it, |rows| above 0 means data is
+% started|, and |session ended| when it stops. With *Create run* on, the relay creates the
+% run with its own profile, and logs |run created| and then |run ended|. A run it can't
+% create or end shows as a warning in its log, and the rows still reach the dataset.
+% Every 30 seconds it logs a |stats| line. In it, |rows| above 0 means data is
 % reaching the relay, |gaps| counts packets lost on the way, and |write_errors| counts
 % rows the relay couldn't write to Nominal.
 %

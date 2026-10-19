@@ -18,8 +18,8 @@ func newBytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 // A file rather than environment variables, deliberately. A daemon's settings outlive
 // any shell that started it, and env vars are awkward to inspect, awkward to set under
 // a service manager, and invisible when you are trying to work out how a running proxy
-// was configured. A file can be version-controlled (minus the token), diffed, and
-// pointed at by a systemd unit.
+// was configured. A file can be version-controlled, diffed, and pointed at by a systemd
+// unit. It holds no secret: the API key comes from a profile in Nominal's config file.
 //
 // YAML rather than JSON because this file is written and read by people, and comments
 // are the difference between a template that explains itself and one that needs the
@@ -30,7 +30,14 @@ type Config struct {
 	// listening interface is the primary access control.
 	Listen string `yaml:"listen"`
 
-	Nominal NominalConfig `yaml:"nominal"`
+	// Profile names the profile in Nominal's config file that holds the API key, the base
+	// URL and the workspace runs go in. ProfileFile is that file's path, empty for the
+	// standard location. A dry run reads neither.
+	Profile     string `yaml:"profile"`
+	ProfileFile string `yaml:"profile_file"`
+
+	// Nominal is the profile LoadConfig read, empty in a dry run.
+	Nominal Profile `yaml:"-"`
 
 	// IdleTimeout is how long a configuration may go unheard before its stream is
 	// closed and flushed. Hosts re-announce every second, even while a model is paused,
@@ -56,25 +63,15 @@ type Config struct {
 	DryRun bool `yaml:"dry_run"`
 }
 
-type NominalConfig struct {
-	BaseURL string `yaml:"base_url"`
-
-	// Token is a Nominal API key. This is the one secret in the file, which is
-	// why LoadConfig warns about the file's permissions — see checkPermissions.
-	Token string `yaml:"token"`
-}
-
-// DefaultConfig holds everything that has a sensible default, so a minimal file needs
-// only nominal.token.
+// DefaultConfig holds everything that has a sensible default, so a file can be empty
+// when the default profile has the API key.
 func DefaultConfig() Config {
 	return Config{
 		Listen:        "0.0.0.0:15400",
+		Profile:       "default",
 		IdleTimeout:   5 * time.Minute,
 		LogLevel:      "info",
 		StatsInterval: 30 * time.Second,
-		Nominal: NominalConfig{
-			BaseURL: "https://api.gov.nominal.io/api",
-		},
 	}
 }
 
@@ -100,12 +97,9 @@ func LoadConfig(path string) (Config, []string, error) {
 	if cfg.Listen == "" {
 		return cfg, nil, fmt.Errorf("%s: listen is required", path)
 	}
-	if !cfg.DryRun && cfg.Nominal.Token == "" {
-		return cfg, nil, fmt.Errorf("%s: nominal.token is not set. Set it to a Nominal API key, "+
-			"or set dry_run to true", path)
-	}
-	if !cfg.DryRun && cfg.Nominal.BaseURL == "" {
-		return cfg, nil, fmt.Errorf("%s: nominal.base_url is required", path)
+	if !cfg.DryRun && cfg.Profile == "" {
+		return cfg, nil, fmt.Errorf("%s: profile is empty. Name a profile in your Nominal "+
+			"config file, or remove the key to use the one named default", path)
 	}
 	if cfg.IdleTimeout < 0 {
 		return cfg, nil, fmt.Errorf("%s: idle_timeout cannot be negative", path)
@@ -131,8 +125,21 @@ func LoadConfig(path string) (Config, []string, error) {
 				"can write to any dataset the API key can. List your dataset RIDs under "+
 				"allowed_datasets.")
 	}
-	if w := checkPermissions(path); w != "" {
-		warnings = append(warnings, w)
+
+	if !cfg.DryRun {
+		profileFile := cfg.ProfileFile
+		if profileFile == "" {
+			if profileFile, err = DefaultProfileFile(); err != nil {
+				return cfg, nil, fmt.Errorf("finding the Nominal config file: %w. "+
+					"Set profile_file to its path", err)
+			}
+		}
+		if cfg.Nominal, err = ReadProfile(profileFile, cfg.Profile); err != nil {
+			return cfg, nil, err
+		}
+		if w := checkPermissions(profileFile); w != "" {
+			warnings = append(warnings, w)
+		}
 	}
 
 	return cfg, warnings, nil
@@ -151,9 +158,9 @@ func (c Config) DatasetAllowed(rid string) bool {
 	return false
 }
 
-// checkPermissions warns if anyone but its owner has access to the config. The file
-// holds an API key, so this is worth saying out loud rather than trusting deployment to
-// have got it right.
+// checkPermissions warns if anyone but its owner has access to Nominal's config file. The
+// file holds an API key, so this is worth saying out loud rather than trusting deployment
+// to have got it right.
 //
 // Skipped on Windows, where the POSIX mode bits do not describe the real ACL and would
 // produce a misleading warning either way.

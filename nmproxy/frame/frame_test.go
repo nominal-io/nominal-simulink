@@ -25,13 +25,16 @@ const (
 	wantSessionID = uint64(0x1122334455667788)
 	wantConfigID  = uint64(0x5bbb5bdfcbf6bf55)
 	wantSequence  = uint64(42)
+	wantEnd       = int64(1000002000)
 )
 
 var (
 	wantChannels = []string{"engine.rpm", "engine.egt", "engine.psi"}
 	wantTags     = []Tag{{"model", "A"}, {"execution-id", "7"}}
-	wantTimes    = []int64{1000000000, 1000001000, 1000002000}
-	wantValues   = [][]float64{
+	wantRun      = Run{Mode: RunOwn, StartNanos: 1000000000, TagCount: 2,
+		Title: "Model A, execution 7", RefName: "default"}
+	wantTimes  = []int64{1000000000, 1000001000, 1000002000}
+	wantValues = [][]float64{
 		{1500.0, 700.0, 30.0},
 		{1510.5, 701.5, 30.1},
 		{1521.25, 703.0, 30.2},
@@ -139,6 +142,9 @@ func TestDecodeHelloFixture(t *testing.T) {
 			t.Errorf("tag %d = %+v, want %+v", i, h.Tags[i], tag)
 		}
 	}
+	if h.Run != wantRun {
+		t.Errorf("Run = %+v, want %+v", h.Run, wantRun)
+	}
 
 	// The mapping only works if the announced channels hash to the announced config,
 	// so verify the HELLO is internally consistent as a proxy would.
@@ -185,6 +191,26 @@ func TestDecodeDataFixture(t *testing.T) {
 	}
 }
 
+func TestDecodeEndFixture(t *testing.T) {
+	fx := loadFixtures(t)
+	buf := fx["end"]
+	if buf == nil {
+		t.Fatal("no end fixture")
+	}
+
+	e, err := DecodeEnd(buf)
+	if err != nil {
+		t.Fatalf("DecodeEnd: %v", err)
+	}
+	if e.SessionID != wantSessionID || e.ConfigID != wantConfigID {
+		t.Errorf("ids = %#016x, %#016x, want %#016x, %#016x",
+			e.SessionID, e.ConfigID, wantSessionID, wantConfigID)
+	}
+	if e.EndNanos != wantEnd {
+		t.Errorf("EndNanos = %d, want %d", e.EndNanos, wantEnd)
+	}
+}
+
 func TestMaxChannelsMatchesC(t *testing.T) {
 	fx := loadFixtures(t)
 	// max_channels is decimal, so loadFixtures stored nil; re-read it as a number.
@@ -218,7 +244,13 @@ func TestMaxChannelsMatchesC(t *testing.T) {
 func TestRejectsMalformed(t *testing.T) {
 	fx := loadFixtures(t)
 
-	for _, name := range []string{"hello", "data"} {
+	decoders := map[string]func([]byte) error{
+		"hello": func(b []byte) error { _, err := DecodeHello(b); return err },
+		"data":  func(b []byte) error { _, err := DecodeData(b); return err },
+		"end":   func(b []byte) error { _, err := DecodeEnd(b); return err },
+	}
+
+	for _, name := range []string{"hello", "data", "end"} {
 		buf := fx[name]
 		if buf == nil {
 			t.Fatalf("no %s fixture", name)
@@ -226,13 +258,7 @@ func TestRejectsMalformed(t *testing.T) {
 
 		// Truncated at every length, not just one.
 		for n := 0; n < len(buf); n++ {
-			var err error
-			if name == "hello" {
-				_, err = DecodeHello(buf[:n])
-			} else {
-				_, err = DecodeData(buf[:n])
-			}
-			if err == nil {
+			if decoders[name](buf[:n]) == nil {
 				t.Errorf("%s truncated to %d bytes was accepted", name, n)
 			}
 		}
@@ -257,14 +283,42 @@ func TestRejectsMalformed(t *testing.T) {
 		}
 
 		// A wrong-type decode must be refused, not silently misread.
-		if name == "hello" {
-			if _, err := DecodeData(buf); err == nil {
-				t.Error("a HELLO decoded as DATA")
+		for other, decode := range decoders {
+			if other != name && decode(buf) == nil {
+				t.Errorf("a %s frame decoded as %s", name, other)
 			}
-		} else {
-			if _, err := DecodeHello(buf); err == nil {
-				t.Error("a DATA decoded as HELLO")
-			}
+		}
+	}
+}
+
+// TestRunRules covers what the grammar can't say about the run: its mode is one of three,
+// it can't show more tags than the HELLO has, and a run has a title and a ref name.
+func TestRunRules(t *testing.T) {
+	fx := loadFixtures(t)
+	good := fx["hello"]
+
+	// run_mode sits before run_start(8), run_tag_count(2), the title and the ref name.
+	at := len(good) - (2 + len(wantRun.RefName)) - (2 + len(wantRun.Title)) - 2 - 8 - 1
+
+	for _, tc := range []struct {
+		what   string
+		mutate func([]byte) []byte
+	}{
+		{"an unknown run mode", func(b []byte) []byte { b[at] = 3; return b }},
+		{"a run showing more tags than the HELLO has", func(b []byte) []byte {
+			b[at+9], b[at+10] = byte(len(wantTags)+1), 0
+			return b
+		}},
+		{"a run with an empty ref name", func(b []byte) []byte {
+			// Cut the ref name off and give it length zero.
+			b = b[:len(b)-len(wantRun.RefName)]
+			b[len(b)-2], b[len(b)-1] = 0, 0
+			return b
+		}},
+	} {
+		bad := tc.mutate(append([]byte(nil), good...))
+		if _, err := DecodeHello(bad); err == nil {
+			t.Errorf("HELLO with %s was accepted", tc.what)
 		}
 	}
 }

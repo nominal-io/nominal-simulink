@@ -29,7 +29,7 @@ func newRejectingRegistry(t *testing.T) (*Registry, *logRecorder) {
 		t.Fatalf("creating the writer: %v", err)
 	}
 	t.Cleanup(func() { _ = w.Close() })
-	return NewRegistry(w, cfg, log), rec
+	return NewRegistry(w, nil, cfg, log), rec
 }
 
 // A write that fails after Push returned is counted, and the stream's close says it had

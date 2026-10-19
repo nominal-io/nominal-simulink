@@ -50,6 +50,14 @@ const (
 const (
 	TypeHello uint8 = 1
 	TypeData  uint8 = 2
+	TypeEnd   uint8 = 3
+)
+
+// Run modes: what run a HELLO asks the relay to make for its session.
+const (
+	RunNone   uint8 = 0
+	RunOwn    uint8 = 1 // a run for this session alone
+	RunShared uint8 = 2 // one run for every session with this title
 )
 
 // ErrWrongVersion is returned separately from other malformed input because it is the
@@ -80,12 +88,29 @@ type Hello struct {
 	DatasetRID string
 	Channels   []string
 	Tags       []Tag // on every channel, in the order the sender listed them
+	Run        Run
 }
 
 // Tag is one key and value, such as execution-id=7.
 type Tag struct {
 	Key   string
 	Value string
+}
+
+// Run is the run a HELLO asks for. Every HELLO of a session repeats it, and the relay
+// acts on the first. It is per session, so ConfigID leaves it out.
+type Run struct {
+	Mode       uint8 // RunNone, RunOwn or RunShared
+	StartNanos int64
+	TagCount   int // the run shows the points with the first TagCount tags
+	Title      string
+	RefName    string // the name the dataset goes under in the run
+}
+
+// End says a session has ended. Senders send it several times, since UDP can lose any one.
+type End struct {
+	Header
+	EndNanos int64 // the newest row's timestamp
 }
 
 // Data carries rows that reference channels by index into the Hello list, which is why
@@ -144,7 +169,7 @@ func DecodeHeader(buf []byte) (Header, error) {
 	if buf[4] != Version {
 		return h, fmt.Errorf("%w: %d (this proxy speaks %d)", ErrWrongVersion, buf[4], Version)
 	}
-	if buf[5] != TypeHello && buf[5] != TypeData {
+	if buf[5] != TypeHello && buf[5] != TypeData && buf[5] != TypeEnd {
 		return h, ErrType
 	}
 
@@ -221,7 +246,48 @@ func DecodeHello(buf []byte) (*Hello, error) {
 		tags = append(tags, tag)
 	}
 
-	return &Hello{Header: h, DatasetRID: rid, Channels: channels, Tags: tags}, nil
+	if at+1+8+2 > len(buf) {
+		return nil, ErrMalformed
+	}
+	run := Run{
+		Mode:       buf[at],
+		StartNanos: int64(binary.LittleEndian.Uint64(buf[at+1 : at+9])),
+		TagCount:   int(binary.LittleEndian.Uint16(buf[at+9 : at+11])),
+	}
+	at += 11
+	if run.Title, at, err = readString(buf, at); err != nil {
+		return nil, err
+	}
+	if run.RefName, _, err = readString(buf, at); err != nil {
+		return nil, err
+	}
+	if run.Mode > RunShared {
+		return nil, fmt.Errorf("%w: run mode %d", ErrMalformed, run.Mode)
+	}
+	if run.TagCount > len(tags) {
+		return nil, fmt.Errorf("%w: the run shows %d tags of %d", ErrMalformed, run.TagCount, len(tags))
+	}
+	if run.Mode != RunNone && (run.Title == "" || run.RefName == "") {
+		return nil, fmt.Errorf("%w: a run with no title or ref name", ErrMalformed)
+	}
+
+	return &Hello{Header: h, DatasetRID: rid, Channels: channels, Tags: tags, Run: run}, nil
+}
+
+// DecodeEnd parses an END body.
+func DecodeEnd(buf []byte) (*End, error) {
+	h, err := DecodeHeader(buf)
+	if err != nil {
+		return nil, err
+	}
+	if h.Type != TypeEnd {
+		return nil, ErrType
+	}
+	if HeaderBytes+8 > len(buf) {
+		return nil, ErrMalformed
+	}
+	end := int64(binary.LittleEndian.Uint64(buf[HeaderBytes : HeaderBytes+8]))
+	return &End{Header: h, EndNanos: end}, nil
 }
 
 // DecodeData parses a DATA body.

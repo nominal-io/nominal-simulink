@@ -16,6 +16,7 @@ in the same commit as the string.
                      the Execution ID field's errors              simulink/**/nominal_sink_execid.m
     ref/nmproxy.md   the relay's log messages and warnings        nmproxy/**/*.go
                      the errors that stop it                      nmproxy/proxy/config.go,
+                                                                  nmproxy/proxy/profile.go,
                                                                   nmproxy/proxy/server.go
     ref/frames.md    the frame limits in FRAME_LIMITS below       cstream/src/nm_frame.h
 
@@ -186,7 +187,7 @@ def problems(root: Path, docs: Path) -> list[str]:
         source = root / "cstream" / "src" / c
         require("messages", _stream_messages(source.read_text(encoding="utf-8")), source)
 
-    for go in ("config.go", "server.go"):
+    for go in ("config.go", "profile.go", "server.go"):
         source = root / "nmproxy" / "proxy" / go
         require("nmproxy", _go_errors(source.read_text(encoding="utf-8")), source)
 

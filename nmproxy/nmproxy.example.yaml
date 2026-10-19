@@ -1,13 +1,14 @@
 # nmproxy configuration
 #
-# Copy this file, fill in the API key and the datasets you expect, and pass its path to
-# -config:
+# Copy this file, fill in the datasets you expect, and pass its path to -config:
 #
 #     nmproxy -config <path to nmproxy.yaml>
 #
-# The file holds an API key, so keep it out of version control and readable only by the
-# account running nmproxy (chmod 600). On Linux and macOS, nmproxy warns at startup if
-# other accounts can read the file.
+# The API key isn't in this file. nmproxy reads it, with your instance's API URL, from a
+# profile in Nominal's config file, the same file the Simulink block and Nominal's other
+# clients read. That file holds the key, so keep it readable only by the account running
+# nmproxy (chmod 600). On Linux and macOS, nmproxy warns at startup if other accounts can
+# read it.
 #
 # nmproxy refuses to start if this file has a key it does not recognize.
 
@@ -20,13 +21,13 @@
 listen: "0.0.0.0:15400"
 
 
-nominal:
-  # The REST API base URL of your Nominal instance: the API URL on your organization's
-  # API keys page.
-  base_url: "<API URL>"
+# The profile in Nominal's config file that holds the API key and base URL. Runs go in the
+# profile's workspace_rid, or in your organization's default workspace when it has none.
+profile: "default"
 
-  # A Nominal API key.
-  token: "<API key>"
+# Nominal's config file. Empty reads ~/.config/nominal/config.yml in the home folder of the
+# account running nmproxy, or %USERPROFILE%\.config\nominal\config.yml on Windows.
+profile_file: ""
 
 
 # The RIDs of the datasets nmproxy may write to.
@@ -54,8 +55,9 @@ stats_interval: 30s
 log_level: "info"
 
 
-# Decode and log frames without writing anything to Nominal.
+# Decode and log frames, and the runs nmproxy would make, without writing anything to
+# Nominal.
 #
-# Use it to check that frames arrive and decode to sensible values. A dry run needs no
-# API key.
+# Use it to check that frames arrive and decode to sensible values. A dry run reads no
+# profile, so it needs no API key.
 dry_run: false

@@ -21,6 +21,9 @@ function nmframe_test()
     wantRid       = 'ri.catalog.test.dataset.abc';
     wantChannels  = {'engine.rpm', 'engine.egt', 'engine.psi'};
     wantTags      = {'model', 'A'; 'execution-id', '7'};
+    wantRun       = struct('mode', 'own', 'start', int64(1000000000), 'tagCount', 2, ...
+                           'title', 'Model A, execution 7', 'refName', 'default');
+    wantEnd       = int64(1000002000);
     % Hex literals, not hex2dec: hex2dec goes via double and rounds anything above 2^53,
     % which would make these expectations wrong in exactly the way the test exists to
     % catch.
@@ -53,6 +56,7 @@ function nmframe_test()
     failures = report(failures, strcmp(h.datasetRid, wantRid), 'HELLO carries the dataset RID');
     failures = report(failures, isequal(h.channels, wantChannels), 'HELLO carries the channel names in order');
     failures = report(failures, isequal(h.tags, wantTags), 'HELLO carries the tags in order');
+    failures = report(failures, isequal(h.run, wantRun), 'HELLO carries the run');
 
     % The mapping only works if the announced channels hash to the announced config.
     failures = report(failures, ...
@@ -68,6 +72,11 @@ function nmframe_test()
     % tolerance would hide a real encoding bug in the low mantissa.
     failures = report(failures, isequal(d.values, wantValues), 'values survive the round trip exactly');
 
+    e = nmframe_decode(fx.end);
+    failures = report(failures, strcmp(e.type, 'end') && isequal(e.sessionId, wantSession), ...
+        'END decodes as an END for the session');
+    failures = report(failures, isequal(e.endTime, wantEnd), 'END carries the end time');
+
     % 4 ------------------------------------------------------------------ malformed
     %
     % These datagrams arrive unauthenticated, so anything that can reach the port can
@@ -77,6 +86,16 @@ function nmframe_test()
         'HELLO truncated at any length is rejected');
     failures = report(failures, allTruncationsRejected(fx.data), ...
         'DATA truncated at any length is rejected');
+    failures = report(failures, allTruncationsRejected(fx.end), ...
+        'END truncated at any length is rejected');
+
+    % The run's rules, which the grammar can't state. run_mode sits before run_start(8),
+    % run_tag_count(2), the title and the ref name.
+    runAt = numel(fx.hello) - (2 + numel(wantRun.refName)) - (2 + numel(wantRun.title)) - 2 - 8;
+    failures = report(failures, rejects(@() nmframe_decode(corrupt(fx.hello, runAt, 3))), ...
+        'an unknown run mode is rejected');
+    failures = report(failures, rejects(@() nmframe_decode(corrupt(fx.hello, runAt + 9, 3))), ...
+        'a run showing more tags than the HELLO has is rejected');
 
     failures = report(failures, rejects(@() nmframe_decode(corrupt(fx.hello, 1, 255))), ...
         'bad magic is rejected');
