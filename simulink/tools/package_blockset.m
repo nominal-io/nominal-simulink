@@ -70,10 +70,10 @@ function file = package_blockset()
             'reports how many.'];
     end
 
-    % Editor backups and Simulink caches can land here while working on the blockset,
-    % and none of them belong in a release.
+    % Editor backups, Simulink caches and Finder's .DS_Store can land here while working
+    % on the blockset, and none of them belong in a release.
     files = opts.ToolboxFiles;
-    junk  = endsWith(files, {'.asv', '.autosave', '.slxc', '.mexw64.pdb'}) | ...
+    junk  = endsWith(files, {'.asv', '.autosave', '.slxc', '.mexw64.pdb', '.DS_Store'}) | ...
             contains(files, [filesep 'slprj' filesep]);
     opts.ToolboxFiles = files(~junk);
 

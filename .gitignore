@@ -76,6 +76,7 @@ simulink/blockset/codegen/
 
 .claude
 .vscode
+.DS_Store
 
 build-linux/
 
