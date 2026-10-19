@@ -64,6 +64,10 @@ struct nm_stream {
     char            *name_pool;     /* one allocation holding every channel name */
     size_t           channel_count;
 
+    nm_tag *tags;                   /* tag_count entries, shared by every channel */
+    char   *tag_pool;               /* one allocation holding every key and value */
+    size_t  tag_count;
+
     uint8_t *encode_buf;
     size_t   encode_cap;
 
@@ -106,9 +110,46 @@ static int g_curl_ready = 0;
 
 /* ------------------------------------------------------------------ helpers */
 
+/* Copy the caller's tags into one block, for the same reason as the channel names below.
+ * Runs first, so each channel can point at the copy. */
+static int copy_tags(nm_stream *s, const nm_tag *tags, size_t count)
+{
+    size_t total = 0, i;
+    char  *cursor;
+
+    if (count == 0) {
+        return 0;
+    }
+    for (i = 0; i < count; i++) {
+        total += strlen(tags[i].key) + 1 + strlen(tags[i].value) + 1;
+    }
+
+    s->tags     = calloc(count, sizeof *s->tags);
+    s->tag_pool = malloc(total);
+    if (s->tags == NULL || s->tag_pool == NULL) {
+        return -1;
+    }
+
+    cursor = s->tag_pool;
+    for (i = 0; i < count; i++) {
+        size_t k = strlen(tags[i].key) + 1;
+        size_t v = strlen(tags[i].value) + 1;
+
+        memcpy(cursor, tags[i].key, k);
+        s->tags[i].key = cursor;
+        cursor += k;
+        memcpy(cursor, tags[i].value, v);
+        s->tags[i].value = cursor;
+        cursor += v;
+    }
+
+    s->tag_count = count;
+    return 0;
+}
+
 /* Copy the caller's channel names into one block so their storage need not outlive
- * nm_open, and so the sender never chases a dangling pointer. Tags are left empty
- * because nm_config takes none. */
+ * nm_open, and so the sender never chases a dangling pointer. Every channel carries the
+ * stream's tags. */
 static int copy_channels(nm_stream *s, const char *const *names, size_t count)
 {
     size_t total = 0, i;
@@ -132,8 +173,8 @@ static int copy_channels(nm_stream *s, const char *const *names, size_t count)
         size_t n = strlen(names[i]) + 1;
         memcpy(cursor, names[i], n);
         s->channels[i].name      = cursor;
-        s->channels[i].tags      = NULL;
-        s->channels[i].tag_count = 0;
+        s->channels[i].tags      = s->tags;
+        s->channels[i].tag_count = s->tag_count;
         cursor += n;
     }
 
@@ -156,7 +197,8 @@ static size_t encode_hello(const nm_stream *s, uint8_t *buf, size_t len)
         names[i] = s->channels[i].name;
     }
     return nm_frame_encode_hello(buf, len, s->session_id, s->config_id,
-                                 s->dataset_rid, names, s->channel_count);
+                                 s->dataset_rid, names, s->channel_count,
+                                 s->tags, s->tag_count);
 }
 
 /* Re-announce the channel mapping. Losing this to a dropped datagram is expected and
@@ -363,14 +405,23 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
 {
     nm_stream *s;
     nm_status  st = NM_OK;
-    size_t     worst_case;
+    size_t     worst_case, tag_bytes = 0, i;
 
     /* Common requirements, then each mode's own. DIRECT needs a base URL to POST to
      * and a credential. PROXY needs a relay to send to and neither of those. */
     if (cfg == NULL || cfg->dataset_rid == NULL || cfg->channel_names == NULL ||
-        cfg->channel_count == 0 || cfg->capacity_rows == 0) {
+        cfg->channel_count == 0 || cfg->capacity_rows == 0 ||
+        (cfg->tag_count > 0 && cfg->tags == NULL)) {
         st = NM_ERR_ARG;
         goto done;
+    }
+    for (i = 0; i < cfg->tag_count; i++) {
+        if (cfg->tags[i].key == NULL || cfg->tags[i].key[0] == '\0' ||
+            cfg->tags[i].value == NULL) {
+            st = NM_ERR_ARG;
+            goto done;
+        }
+        tag_bytes += strlen(cfg->tags[i].key) + strlen(cfg->tags[i].value);
     }
     if (cfg->mode == NM_MODE_PROXY) {
         if (cfg->proxy_host == NULL || cfg->proxy_host[0] == '\0' ||
@@ -400,7 +451,8 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
     s->batch_delay_ms   = cfg->max_batch_delay_ms > 0 ? cfg->max_batch_delay_ms : 100u;
     s->close_timeout_ms = cfg->close_timeout_ms > 0 ? cfg->close_timeout_ms : 15000u;
 
-    if (copy_channels(s, cfg->channel_names, cfg->channel_count) != 0) {
+    if (copy_tags(s, cfg->tags, cfg->tag_count) != 0 ||
+        copy_channels(s, cfg->channel_names, cfg->channel_count) != 0) {
         st = NM_ERR_ALLOC;
         goto fail;
     }
@@ -423,14 +475,14 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
         strcpy(s->dataset_rid, cfg->dataset_rid);
 
         s->config_id = nm_frame_config_id(cfg->dataset_rid, cfg->channel_names,
-                                          cfg->channel_count);
+                                          cfg->channel_count, s->tags, s->tag_count);
         /* Distinguishes concurrent models writing to one relay. Derived from the
          * config and the clock rather than a PRNG, which keeps this dependency-free
          * and is sufficient: it only has to be distinct, not unpredictable. */
         s->session_id = s->config_id ^ (uint64_t)nm_now_nanos();
 
         /* The channel count alone does not settle whether the mapping fits one
-         * datagram: the names and the RID travel in it too. One that does not fit
+         * datagram: the names, the RID and the tags travel in it too. One that does not fit
          * could never be sent, so the relay would discard every row for want of a
          * mapping while this side saw nothing wrong. Refuse it here instead. */
         {
@@ -451,12 +503,15 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
     } else {
         /* Reserve the encode buffer from an estimate. 32 bytes per point covers tag,
          * length, a full-width timestamp and a fixed64 value. 256 per channel covers a
-         * name of up to about 240 bytes plus the nested length prefixes. drain_direct
+         * name of up to about 240 bytes plus the nested length prefixes, and every
+         * channel repeats the tags, at up to 16 bytes of framing each. drain_direct
          * shrinks any batch that still does not fit. */
         {
             size_t rows = cfg->capacity_rows < NM_MAX_ROWS_PER_REQUEST
                         ? cfg->capacity_rows : NM_MAX_ROWS_PER_REQUEST;
-            worst_case = cfg->channel_count * 256u + rows * cfg->channel_count * 32u;
+            size_t per_channel = 256u + tag_bytes + cfg->tag_count * 16u;
+            worst_case = cfg->channel_count * per_channel
+                       + rows * cfg->channel_count * 32u;
         }
         s->encode_buf = malloc(worst_case);
         if (s->encode_buf == NULL) {
@@ -593,6 +648,8 @@ void nm_close_stats(nm_stream *s, nm_stats_t *out)
     free(s->encode_buf);
     free(s->channels);
     free(s->name_pool);
+    free(s->tags);
+    free(s->tag_pool);
     free(s->dataset_rid);
     free(s);
 }

@@ -33,6 +33,14 @@ of a variable that holds the text. No parameter can change while the model runs.
 **Dataset RID**
 : Default `''`. The RID of the dataset to write to. The dataset has to exist already. Required.
 
+**Tags (key and value pairs)**
+: Default `[]`, no tags. Tags on every channel the block writes, which keep the runs of one
+  model apart in a dataset they share. Enter a two-column string array with one row per tag,
+  such as `["model" "A"; "execution-id" "7"]`, a cell array of the same shape, a `dictionary`
+  or a `containers.Map`. A value can be a number. Keys can't be empty or repeat. See
+  [Simulation before hardware](site:/quickstart/quickstart/fundamentals/stories/simulation-first/)
+  for how tags and runs fit together.
+
 **Mode**
 : Default **Direct to Nominal**. **Direct to Nominal** sends over HTTPS from the computer running
   the model. **Via proxy** sends over UDP to `nmproxy`, which writes to Nominal. See
@@ -62,8 +70,11 @@ of a variable that holds the text. No parameter can change while the model runs.
 
 **Timestamps**
 : Default **Simulation time from start**. **Simulation time from start** stamps each row with the
-  time the run started plus its simulation time. **Host wall clock** stamps each row with the
-  computer's clock when the block writes it. See
+  time the run started plus its simulation time. **Directly record simulation time (t0=0)**
+  stamps each row with its simulation time alone, counted from the Unix epoch, so every run
+  starts at the same instant. Choosing it while **Tags (key and value pairs)** is empty asks
+  you to confirm, and **Cancel** sets **Simulation time from start**. **Host wall clock**
+  stamps each row with the computer's clock when the block writes it. See
   [Timing and dropped rows](../guides/timing.md#the-time-on-each-point).
 
 **Add an output port with the discarded-row count**
@@ -85,14 +96,15 @@ The block reads these when a run starts. Proxy mode uses neither.
 ## Limits in proxy mode
 
 Each run's channel list travels to `nmproxy` in a single packet, which holds at most 1400 bytes.
-The dataset RID plus the channel names have to fit:
+The dataset RID, the channel names and the tags have to fit:
 
-28 + (RID length) + the sum over channels of (2 + name length) ≤ 1400
+30 + (RID length) + the sum over channels of (2 + name length) + the sum over tags of
+(4 + key length + value length) ≤ 1400
 
-Lengths are in bytes. With a 70-character RID and 10-character names, that is 108
-channels. Each name and the RID can be at most 256 bytes, and a block can have at most 169
-channels however short the names are. [The frame protocol](frames.md#limits) has the reasoning
-behind these limits.
+Lengths are in bytes. With a 70-character RID, 10-character names and no tags, that is 108
+channels. The RID, each name, each tag key and each tag value can be at most 256 bytes. A block
+can have at most 64 tags, and at most 169 channels however short the names are.
+[The frame protocol](frames.md#limits) has the reasoning behind these limits.
 
 A block that breaks one of the limits stops when the run starts, with
-`in proxy mode, the dataset RID and channel names have to fit in one 1400-byte packet to the relay, and these don't`.
+`in proxy mode, the dataset RID, channel names and tags have to fit in one 1400-byte packet to the relay, and these don't`.

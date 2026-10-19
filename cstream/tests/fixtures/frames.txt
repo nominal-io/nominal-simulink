@@ -9,8 +9,9 @@
 # INPUT
 #   dataset RID   ri.catalog.test.dataset.abc
 #   channels      engine.rpm, engine.egt, engine.psi
+#   tags          model=A, execution-id=7
 #   session_id    0x1122334455667788
-#   config_id     0x19915455f27bd0f7
+#   config_id     0x5bbb5bdfcbf6bf55
 #   sequence      42
 #   rows          ts=1000000000  1500.0    700.0   30.0
 #                 ts=1000001000  1510.5    701.5   30.1
@@ -22,7 +23,8 @@
 # config_id — get this exactly right or every frame is silently rejected
 #
 # FNV-1a, 64-bit, over each field length-prefixed as a 4-byte little-endian count
-# followed by its bytes: first the RID, then each channel name in order.
+# followed by its bytes: first the RID, then each channel name in order, then each
+# tag's key and value in order.
 #
 #   h = 0xcbf29ce484222325                  offset basis
 #   for each byte b:  h ^= b; h *= 0x100000001b3   (wrapping at 64 bits)
@@ -31,7 +33,7 @@
 # {"a","bc"} colliding. Canonical check: FNV-1a/64 of the single byte 'a' is
 # 0xaf63dc4c8601ec8c — verify your implementation against that before trusting it here.
 
-config_id 19915455f27bd0f7
+config_id 5bbb5bdfcbf6bf55
 
 # Maximum channels a DATA frame can carry, derived from the 1400-byte MTU:
 #   8*nch <= 1400 - 24 (header) - 12 (data fixed) - 8 (timestamp)  ->  169
@@ -46,14 +48,15 @@ max_channels 169
 # are x86-64 and the payload is mostly IEEE-754 doubles already stored little-endian, so
 # big-endian would mean byte-swapping every value on the host least able to afford it.
 
-# HELLO, 91 bytes
+# HELLO, 120 bytes
 # 4e4d5331 magic "NMS1" | 01 version | 01 type=HELLO | 0000 reserved
-# 8877665544332211 session | f7d07bf255549119 config
+# 8877665544332211 session | 55bff6cbdf5bbb5b config
 # 1b00 rid_len=27 | rid | 0300 channel_count=3 | (0a00 len + name) x3
-hello 4e4d5331010100008877665544332211f7d07bf2555491191b0072692e636174616c6f672e746573742e646174617365742e61626303000a00656e67696e652e72706d0a00656e67696e652e6567740a00656e67696e652e707369
+# 0200 tag_count=2 | (len + key, len + value) x2
+hello 4e4d533101010000887766554433221155bff6cbdf5bbb5b1b0072692e636174616c6f672e746573742e646174617365742e61626303000a00656e67696e652e72706d0a00656e67696e652e6567740a00656e67696e652e707369020005006d6f64656c0100410c00657865637574696f6e2d6964010037
 
 # DATA, 132 bytes
 # header as above with type=02 | 2a00000000000000 sequence=42
 # 0300 channel_count=3 | 0300 row_count=3
 # then per row: 8-byte LE int64 timestamp, then channel_count 8-byte LE float64 values
-data 4e4d5331010200008877665544332211f7d07bf2555491192a000000000000000300030000ca9a3b0000000000000000007097400000000000e085400000000000003e40e8cd9a3b0000000000000000009a97400000000000ec85409a99999999193e40d0d19a3b000000000000000000c597400000000000f885403333333333333e40
+data 4e4d533101020000887766554433221155bff6cbdf5bbb5b2a000000000000000300030000ca9a3b0000000000000000007097400000000000e085400000000000003e40e8cd9a3b0000000000000000009a97400000000000ec85409a99999999193e40d0d19a3b000000000000000000c597400000000000f885403333333333333e40

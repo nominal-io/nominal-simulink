@@ -144,7 +144,7 @@ func (r *Registry) handleHello(buf []byte, now time.Time) {
 	// A HELLO is only trustworthy if its contents hash to the config_id it claims.
 	// Cheap to check and it catches a mismatched implementation immediately, rather
 	// than letting DATA frames pile up against a config that can never resolve.
-	if want := frame.ConfigID(hello.DatasetRID, hello.Channels); want != hello.ConfigID {
+	if want := frame.ConfigID(hello.DatasetRID, hello.Channels, hello.Tags); want != hello.ConfigID {
 		r.mu.Lock()
 		r.badFrames++
 		r.mu.Unlock()
@@ -183,7 +183,11 @@ func (r *Registry) handleHello(buf []byte, now time.Time) {
 		return
 	}
 
-	stream, err := r.writer.Open(hello.DatasetRID, hello.Channels, r.countWriteError)
+	tags := make(map[string]string, len(hello.Tags))
+	for _, tag := range hello.Tags {
+		tags[tag.Key] = tag.Value
+	}
+	stream, err := r.writer.Open(hello.DatasetRID, hello.Channels, tags, r.countWriteError)
 	if err != nil {
 		r.writeErrors++
 		r.log.Error("could not open a stream for a new configuration",

@@ -34,11 +34,11 @@ dialog. The rest appear when the run starts.
 `in proxy mode, Proxy host can't be empty and Proxy port must be from 1 to 65535.`
 : Set both to the address `nmproxy` listens on.
 
-`in proxy mode, the dataset RID and channel names have to fit in one 1400-byte packet to the relay, and these don't. Use fewer or shorter channel names.`
-: The block sends its whole channel list to the relay in one packet, and there are too many
-  channels, or the names are too long. [Limits in proxy mode](block.md#limits-in-proxy-mode)
-  gives the exact rule. Splitting the signals across two blocks also works, as does direct
-  mode.
+`in proxy mode, the dataset RID, channel names and tags have to fit in one 1400-byte packet to the relay, and these don't. Use fewer or shorter channel names or tags.`
+: The block sends its whole channel list and its tags to the relay in one packet, and they
+  don't fit: there are too many channels or tags, or the names are too long.
+  [Limits in proxy mode](block.md#limits-in-proxy-mode) gives the exact rule. Splitting the
+  signals across two blocks also works, as does direct mode.
 
 `could not set up sending to Proxy host '<host>'. Check that the name or address is right.`
 : In proxy mode, **Proxy host** didn't resolve to an address.
@@ -54,6 +54,24 @@ dialog. The rest appear when the run starts.
 
 `out of memory.`
 : MATLAB couldn't allocate the block's working memory.
+
+### Tags
+
+These four come from reading **Tags (key and value pairs)** when the run starts. Simulink shows
+each one beneath its own errors about the block's `nominal_sink_tags(tags)` parameter.
+
+`Tags must be pairs of key and value, such as ["model" "A"; "execution-id" "7"], or a dictionary.`
+: The field holds something else, such as a single text value or an array with other than two
+  columns. [Parameters](block.md#parameters) lists the forms it takes.
+
+`a tag key is empty. Every tag needs a key.`
+: A row's first column is empty text.
+
+`the tag key "<key>" appears more than once.`
+: Two rows have the same key. Keep one of them.
+
+`the tag text "<text>" contains a line break or another control character.`
+: A key or value has a line break in it. Remove it.
 
 ## When a run ends
 

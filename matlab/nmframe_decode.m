@@ -13,6 +13,8 @@ function frame = nmframe_decode(bytes)
 %   HELLO adds:
 %       .datasetRid  char
 %       .channels    cellstr, in order
+%       .tags        N-by-2 cell array of char, one {key, value} row per tag, in order.
+%                    Every channel carries them.
 %
 %   DATA adds:
 %       .sequence    uint64, increases by one per DATA frame within a session. A
@@ -83,6 +85,20 @@ function [frame, at] = decodeHello(frame, bytes, at)
     frame.channels = cell(1, count);
     for i = 1:count
         [frame.channels{i}, at] = readString(bytes, at);
+    end
+
+    [count, at] = readU16(bytes, at);
+    if count > 64
+        error('nmframe:malformed', 'HELLO declares %d tags, more than the 64 allowed', count);
+    end
+
+    frame.tags = cell(count, 2);
+    for i = 1:count
+        [frame.tags{i, 1}, at] = readString(bytes, at);
+        if isempty(frame.tags{i, 1})
+            error('nmframe:malformed', 'HELLO tag %d has an empty key', i);
+        end
+        [frame.tags{i, 2}, at] = readString(bytes, at);
     end
 end
 

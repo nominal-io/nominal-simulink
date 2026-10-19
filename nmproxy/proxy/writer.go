@@ -16,11 +16,12 @@ import (
 // without a token or a network, and so the real writer can be swapped without touching
 // anything above it.
 type Writer interface {
-	// Open starts a stream. onError is called for every write that fails after Push has
-	// returned: a writer that batches and sends in the background only learns of a
-	// failure later, and the caller has to count those failures all the same. onError
-	// may be called from any goroutine.
-	Open(datasetRID string, channels []string, onError func(error)) (Stream, error)
+	// Open starts a stream. Every channel carries tags, which may be empty. onError is
+	// called for every write that fails after Push has returned: a writer that batches
+	// and sends in the background only learns of a failure later, and the caller has to
+	// count those failures all the same. onError may be called from any goroutine.
+	Open(datasetRID string, channels []string, tags map[string]string,
+		onError func(error)) (Stream, error)
 }
 
 // Stream accepts rows for a fixed channel set. Each row's values follow the order of
@@ -47,7 +48,8 @@ type LogWriter struct {
 
 // Open never reports a failure through onError: nothing is sent, so nothing can fail
 // later.
-func (w *LogWriter) Open(datasetRID string, channels []string, _ func(error)) (Stream, error) {
+func (w *LogWriter) Open(datasetRID string, channels []string, tags map[string]string,
+	_ func(error)) (Stream, error) {
 	s := &LogStream{rid: datasetRID, channels: channels, parent: w}
 
 	w.mu.Lock()
@@ -55,7 +57,7 @@ func (w *LogWriter) Open(datasetRID string, channels []string, _ func(error)) (S
 	w.mu.Unlock()
 
 	w.Log.Info("stream opened (dry run: nothing will be written)",
-		"dataset", datasetRID, "channels", len(channels))
+		"dataset", datasetRID, "channels", len(channels), "tags", tags)
 	return s, nil
 }
 

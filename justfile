@@ -124,7 +124,7 @@ install-test:
 
 # Load the block and step a model without touching the network, in each release
 sim-test: build library
-    for m in {{releases}}; do "$m" -batch "addpath('simulink/tests'); assertSuccess(runtests({'SinkBlockTest', 'AutonamesTest', 'LibraryMetadataTest'}))" || exit 1; done
+    for m in {{releases}}; do "$m" -batch "addpath('simulink/tests'); assertSuccess(runtests({'SinkBlockTest', 'TagsTest', 'AutonamesTest', 'LibraryMetadataTest'}))" || exit 1; done
 
 # Check the MATLAB frame decoder against the same fixtures as the C and Go ones
 matlab-test:

@@ -91,7 +91,8 @@ function make_library()
             '0, ' ...                                        % showDropped
             '1, ' ...                                        % mode
             '''127.0.0.1'', ' ...                            % proxyHost
-            '15400']);                                       % proxyPort
+            '15400, ' ...                                    % proxyPort
+            '''''']);                                        % tags
 
     % --- mask -------------------------------------------------------------------
     %
@@ -135,6 +136,11 @@ function make_library()
     m.addParameter('Type', 'edit', 'Name', 'datasetRid', ...
         'Prompt', 'Dataset RID', 'Value', '''''');
 
+    % Key and value pairs on every channel, which is how runs of one model share a dataset
+    % and stay apart. nominal_sink_tags reads the forms this takes.
+    m.addParameter('Type', 'edit', 'Name', 'tags', ...
+        'Prompt', 'Tags (key and value pairs)', 'Value', '[]');
+
     % Direct sends HTTPS from this machine; proxy sends compact datagrams to a relay
     % that does the protobuf, TLS and HTTP instead. One block rather than two, because
     % the expected journey is direct until the host runs out of headroom and then proxy
@@ -162,14 +168,15 @@ function make_library()
         'Prompt', 'Buffer capacity (rows)', 'Value', '4096');
 
     % Simulation time is the default: it gives a run whose time axis matches the model
-    % rather than the clock, which is what an offline sim wants. Wall clock is for
-    % real-time and HIL.
+    % rather than the clock, which is what an offline sim wants. t0=0 lines every run of
+    % a model up from zero, for comparing runs. Wall clock is for real-time and HIL.
     % Evaluate must be on: with it off the popup hands the S-function the option text,
     % where it expects a number. On, the value is the 1-based option index, which is
     % what P_TIME_MODE reads.
     m.addParameter('Type', 'popup', 'Name', 'timeMode', ...
         'Prompt', 'Timestamps', ...
-        'TypeOptions', {'Simulation time from start', 'Host wall clock'}, ...
+        'TypeOptions', {'Simulation time from start', ...
+                        'Directly record simulation time (t0=0)', 'Host wall clock'}, ...
         'Value', 'Simulation time from start', ...
         'Evaluate', 'on');
 
@@ -192,6 +199,9 @@ function make_library()
     % MaskEnables array would do the same job but breaks silently the moment a field is
     % reordered, and this dialog is going to grow.
     m.getParameter('mode').Callback = [pathFixPrefix() 'nominal_sink_modecb(gcb);'];
+
+    % Picking t0=0 with no tags asks first. See nominal_sink_timecb.
+    m.getParameter('timeMode').Callback = [pathFixPrefix() 'nominal_sink_timecb(gcb);'];
 
     % Show the transport on the canvas. This is what a separate proxy block would have
     % bought us, without the duplication: you can still see at a glance which way a
@@ -220,7 +230,8 @@ function make_library()
     set_param(blockPath, 'Parameters', ...
         ['convertStringsToChars(channels), convertStringsToChars(datasetRid), ' ...
          'convertStringsToChars(baseUrl), sampleTime, capacityRows, timeMode, ' ...
-         'showDropped, mode, convertStringsToChars(proxyHost), proxyPort']);
+         'showDropped, mode, convertStringsToChars(proxyHost), proxyPort, ' ...
+         'nominal_sink_tags(tags)']);
 
 
     % Apply it once now, so a freshly dragged block starts with the right fields greyed

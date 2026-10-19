@@ -23,12 +23,13 @@ const fixturePath = "../../cstream/tests/fixtures/frames.txt"
 const (
 	wantRID       = "ri.catalog.test.dataset.abc"
 	wantSessionID = uint64(0x1122334455667788)
-	wantConfigID  = uint64(0x19915455f27bd0f7)
+	wantConfigID  = uint64(0x5bbb5bdfcbf6bf55)
 	wantSequence  = uint64(42)
 )
 
 var (
 	wantChannels = []string{"engine.rpm", "engine.egt", "engine.psi"}
+	wantTags     = []Tag{{"model", "A"}, {"execution-id", "7"}}
 	wantTimes    = []int64{1000000000, 1000001000, 1000002000}
 	wantValues   = [][]float64{
 		{1500.0, 700.0, 30.0},
@@ -76,9 +77,15 @@ func loadFixtures(t *testing.T) map[string][]byte {
 // proxy rejects every HELLO from a C host and no data arrives. It is also the check that
 // caught a transcribed digit missing from the C side's FNV-1a offset basis.
 func TestConfigIDMatchesC(t *testing.T) {
-	got := ConfigID(wantRID, wantChannels)
+	got := ConfigID(wantRID, wantChannels, wantTags)
 	if got != wantConfigID {
 		t.Fatalf("ConfigID = %#016x, C encoder produced %#016x", got, wantConfigID)
+	}
+
+	// Two runs of one model differ only in their tags, and must not share a config.
+	next := []Tag{{"model", "A"}, {"execution-id", "8"}}
+	if ConfigID(wantRID, wantChannels, next) == got {
+		t.Error("ConfigID ignores a changed tag value")
 	}
 }
 
@@ -124,10 +131,18 @@ func TestDecodeHelloFixture(t *testing.T) {
 			t.Errorf("channel %d = %q, want %q", i, h.Channels[i], name)
 		}
 	}
+	if len(h.Tags) != len(wantTags) {
+		t.Fatalf("got %d tags, want %d", len(h.Tags), len(wantTags))
+	}
+	for i, tag := range wantTags {
+		if h.Tags[i] != tag {
+			t.Errorf("tag %d = %+v, want %+v", i, h.Tags[i], tag)
+		}
+	}
 
 	// The mapping only works if the announced channels hash to the announced config,
 	// so verify the HELLO is internally consistent as a proxy would.
-	if ConfigID(h.DatasetRID, h.Channels) != h.ConfigID {
+	if ConfigID(h.DatasetRID, h.Channels, h.Tags) != h.ConfigID {
 		t.Error("recomputing ConfigID from the HELLO contents disagrees with its header")
 	}
 }
@@ -266,6 +281,24 @@ func TestInflatedCounts(t *testing.T) {
 	hello[at], hello[at+1] = 0xFF, 0x00
 	if _, err := DecodeHello(hello); err == nil {
 		t.Error("HELLO with an inflated channel count was accepted")
+	}
+
+	// tag_count sits after the channel names.
+	at = HeaderBytes + 2 + len(wantRID) + 2
+	for _, name := range wantChannels {
+		at += 2 + len(name)
+	}
+	copy(hello, fx["hello"])
+	hello[at], hello[at+1] = byte(len(wantTags)+1), 0x00
+	if _, err := DecodeHello(hello); err == nil {
+		t.Error("HELLO with an inflated tag count was accepted")
+	}
+
+	// The first tag's key with its length zeroed must not decode as a tag with no key.
+	copy(hello, fx["hello"])
+	hello[at+2], hello[at+3] = 0x00, 0x00
+	if _, err := DecodeHello(hello); err == nil {
+		t.Error("HELLO with an empty tag key was accepted")
 	}
 
 	data := make([]byte, len(fx["data"]))

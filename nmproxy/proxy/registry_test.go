@@ -76,7 +76,7 @@ func withRID(t *testing.T, hello []byte, rid string) []byte {
 	copy(out, hello)
 	// The RID follows the header and its own 2-byte length.
 	copy(out[frame.HeaderBytes+2:], rid)
-	binary.LittleEndian.PutUint64(out[16:24], frame.ConfigID(rid, h.Channels))
+	binary.LittleEndian.PutUint64(out[16:24], frame.ConfigID(rid, h.Channels, h.Tags))
 	return out
 }
 
@@ -376,9 +376,10 @@ type asyncFailWriter struct {
 	onError func(error)
 }
 
-func (w *asyncFailWriter) Open(rid string, channels []string, onError func(error)) (Stream, error) {
+func (w *asyncFailWriter) Open(rid string, channels []string, tags map[string]string,
+	onError func(error)) (Stream, error) {
 	w.onError = onError
-	return w.LogWriter.Open(rid, channels, nil)
+	return w.LogWriter.Open(rid, channels, tags, nil)
 }
 
 // The Nominal client only enqueues on Push and reports failures later, so a bad token
@@ -398,6 +399,36 @@ func TestWritesThatFailLaterAreCounted(t *testing.T) {
 	w.onError(errors.New("401 Unauthorized"))
 	if st := r.Stats(); st.WriteErrors != 2 {
 		t.Errorf("write_errors=%d, want 2", st.WriteErrors)
+	}
+}
+
+// tagWriter keeps the tags each stream was opened with.
+type tagWriter struct {
+	LogWriter
+	tags map[string]string
+}
+
+func (w *tagWriter) Open(rid string, channels []string, tags map[string]string,
+	onError func(error)) (Stream, error) {
+	w.tags = tags
+	return w.LogWriter.Open(rid, channels, tags, onError)
+}
+
+// The tags in a HELLO are what keep one execution's rows apart from another's in a shared
+// dataset, so they have to reach the stream.
+func TestHelloTagsReachTheWriter(t *testing.T) {
+	w := &tagWriter{LogWriter: LogWriter{Log: quietLogger()}}
+	r := NewRegistry(w, Config{IdleTimeout: time.Minute}, quietLogger())
+
+	r.Handle(loadFixture(t, "hello"), time.Now())
+	want := map[string]string{"model": "A", "execution-id": "7"}
+	if len(w.tags) != len(want) {
+		t.Fatalf("stream opened with tags %v, want %v", w.tags, want)
+	}
+	for k, v := range want {
+		if w.tags[k] != v {
+			t.Errorf("tag %s = %q, want %q", k, w.tags[k], v)
+		}
 	}
 }
 

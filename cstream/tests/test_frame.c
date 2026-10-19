@@ -32,6 +32,8 @@ static void check(int cond, const char *what)
 static const char *const NAMES[] = { "engine.rpm", "engine.egt", "engine.psi" };
 static const char *const RID = "ri.catalog.test.dataset.abc";
 #define NCH 3
+static const nm_tag TAGS[] = { { "model", "A" }, { "execution-id", "7" } };
+#define NTAGS 2
 
 /* row_count sits at header + sequence(8) + channel_count(2). */
 static void put_row_count_ff(uint8_t *buf)
@@ -63,7 +65,7 @@ static void test_fnv1a_matches_the_spec(void)
      * captured from this implementation -- capturing our own output would have happily
      * blessed the broken constant. */
     static const char *const one[] = { "a" };
-    uint64_t got = nm_frame_config_id("", one, 1);
+    uint64_t got = nm_frame_config_id("", one, 1, NULL, 0);
 
     check(got == 0xd955c00fa740f76fULL, "config_id is genuine FNV-1a");
     if (got != 0xd955c00fa740f76fULL) {
@@ -74,8 +76,8 @@ static void test_fnv1a_matches_the_spec(void)
 
 static void test_config_id_is_stable(void)
 {
-    uint64_t a = nm_frame_config_id(RID, NAMES, NCH);
-    uint64_t b = nm_frame_config_id(RID, NAMES, NCH);
+    uint64_t a = nm_frame_config_id(RID, NAMES, NCH, TAGS, NTAGS);
+    uint64_t b = nm_frame_config_id(RID, NAMES, NCH, TAGS, NTAGS);
 
     check(a == b, "config_id is deterministic");
     check(a != 0, "config_id is non-zero");
@@ -85,22 +87,32 @@ static void test_config_id_is_stable(void)
      * columns at the proxy. */
     {
         static const char *const other[] = { "engine.rpm", "engine.egt", "engine.oil" };
-        check(nm_frame_config_id(RID, other, NCH) != a,
+        check(nm_frame_config_id(RID, other, NCH, TAGS, NTAGS) != a,
               "config_id changes when a channel name changes");
     }
     {
-        check(nm_frame_config_id(RID, NAMES, 2) != a,
+        check(nm_frame_config_id(RID, NAMES, 2, TAGS, NTAGS) != a,
               "config_id changes when the channel count changes");
     }
     {
-        check(nm_frame_config_id("ri.catalog.test.dataset.xyz", NAMES, NCH) != a,
+        check(nm_frame_config_id("ri.catalog.test.dataset.xyz", NAMES, NCH,
+                                 TAGS, NTAGS) != a,
               "config_id changes when the dataset changes");
+    }
+    /* Two runs of one model differ only in their tags, and a relay must not mistake
+     * one for the other. */
+    {
+        static const nm_tag next[] = { { "model", "A" }, { "execution-id", "8" } };
+        check(nm_frame_config_id(RID, NAMES, NCH, next, NTAGS) != a,
+              "config_id changes when a tag value changes");
+        check(nm_frame_config_id(RID, NAMES, NCH, TAGS, 1) != a,
+              "config_id changes when a tag is dropped");
     }
     /* Length-prefixing exists to stop this: without it, splitting a name differently
      * would hash the same. */
     {
         static const char *const shifted[] = { "engine.rp", "mengine.egt", "engine.psi" };
-        check(nm_frame_config_id(RID, shifted, NCH) != a,
+        check(nm_frame_config_id(RID, shifted, NCH, TAGS, NTAGS) != a,
               "config_id is not fooled by shifting a character between names");
     }
 }
@@ -109,13 +121,13 @@ static void test_hello_roundtrip(void)
 {
     uint8_t        buf[NM_FRAME_MAX_BYTES];
     nm_frame_hello h;
-    uint64_t       cfg = nm_frame_config_id(RID, NAMES, NCH);
+    uint64_t       cfg = nm_frame_config_id(RID, NAMES, NCH, TAGS, NTAGS);
     size_t         n;
     size_t         i;
-    int            names_ok = 1;
+    int            names_ok = 1, tags_ok = 1;
 
     n = nm_frame_encode_hello(buf, sizeof buf, 0x1122334455667788ULL, cfg,
-                              RID, NAMES, NCH);
+                              RID, NAMES, NCH, TAGS, NTAGS);
     check(n > NM_FRAME_HEADER_BYTES, "HELLO encodes");
 
     check(nm_frame_decode_hello(buf, n, &h) == 0, "HELLO decodes");
@@ -132,6 +144,32 @@ static void test_hello_roundtrip(void)
     }
     check(names_ok, "HELLO carries channel names in order");
 
+    for (i = 0; i < NTAGS && h.tag_count == NTAGS; i++) {
+        if (h.tag_keys[i].len != strlen(TAGS[i].key) ||
+            memcmp(h.tag_keys[i].ptr, TAGS[i].key, h.tag_keys[i].len) != 0 ||
+            h.tag_values[i].len != strlen(TAGS[i].value) ||
+            memcmp(h.tag_values[i].ptr, TAGS[i].value, h.tag_values[i].len) != 0) {
+            tags_ok = 0;
+        }
+    }
+    check(h.tag_count == NTAGS && tags_ok, "HELLO carries the tags in order");
+
+    /* A stream with no tags still sends the count, as zero. */
+    {
+        static const nm_tag empty_key[] = { { "", "A" } };
+        uint8_t        other[NM_FRAME_MAX_BYTES];
+        nm_frame_hello h2;
+        size_t         n2;
+
+        n2 = nm_frame_encode_hello(other, sizeof other, 1, cfg, RID, NAMES, NCH, NULL, 0);
+        check(n2 > 0 && nm_frame_decode_hello(other, n2, &h2) == 0 && h2.tag_count == 0,
+              "a HELLO with no tags round-trips");
+
+        check(nm_frame_encode_hello(other, sizeof other, 1, cfg, RID, NAMES, NCH,
+                                    empty_key, 1) == 0,
+              "a tag with an empty key is refused");
+    }
+
     {
         nm_frame_header hdr;
         check(nm_frame_decode_header(buf, n, &hdr) == 0 &&
@@ -144,7 +182,7 @@ static void test_data_roundtrip(void)
 {
     uint8_t       buf[NM_FRAME_MAX_BYTES];
     nm_frame_data d;
-    uint64_t      cfg = nm_frame_config_id(RID, NAMES, NCH);
+    uint64_t      cfg = nm_frame_config_id(RID, NAMES, NCH, TAGS, NTAGS);
     const int64_t ts[3] = { 1000000000LL, 1000001000LL, 1000002000LL };
     const double  vals[9] = {
         1500.0,  700.0,  30.0,
@@ -244,11 +282,11 @@ static void test_rejects_malformed(void)
     nm_frame_header hdr;
     nm_frame_hello  h;
     nm_frame_data   d;
-    uint64_t        cfg = nm_frame_config_id(RID, NAMES, NCH);
-    size_t          n, i;
+    uint64_t        cfg = nm_frame_config_id(RID, NAMES, NCH, TAGS, NTAGS);
+    size_t          n, i, tag_count_at;
     int             all_rejected = 1;
 
-    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH);
+    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS);
 
     check(nm_frame_decode_header(buf, 4, &hdr) < 0, "a runt datagram is rejected");
 
@@ -282,6 +320,23 @@ static void test_rejects_malformed(void)
     check(nm_frame_decode_hello(copy, n, &h) < 0,
           "an inflated channel count is rejected");
 
+    /* And one whose tag_count claims more tags than it carries. */
+    tag_count_at = NM_FRAME_HEADER_BYTES + 2 + strlen(RID) + 2;
+    for (i = 0; i < NCH; i++) {
+        tag_count_at += 2 + strlen(NAMES[i]);
+    }
+    memcpy(copy, buf, n);
+    copy[tag_count_at]     = NTAGS + 1;
+    copy[tag_count_at + 1] = 0x00;
+    check(nm_frame_decode_hello(copy, n, &h) < 0, "an inflated tag count is rejected");
+
+    /* The first key's length zeroed. Whatever its bytes then read as, the frame must not
+     * decode with a tag that has no key. */
+    memcpy(copy, buf, n);
+    copy[tag_count_at + 2] = 0x00;
+    copy[tag_count_at + 3] = 0x00;
+    check(nm_frame_decode_hello(copy, n, &h) < 0, "an empty tag key is rejected");
+
     /* Same for DATA. */
     {
         const int64_t ts[2] = { 1, 2 };
@@ -305,7 +360,7 @@ static void test_rejects_malformed(void)
     }
 
     /* A HELLO must not decode as DATA, or vice versa. */
-    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH);
+    n = nm_frame_encode_hello(buf, sizeof buf, 1, cfg, RID, NAMES, NCH, TAGS, NTAGS);
     check(nm_frame_decode_data(buf, n, &d) < 0, "a HELLO does not decode as DATA");
 }
 
@@ -326,8 +381,9 @@ static void dump_fixture(const char *label, const uint8_t *buf, size_t n)
 
 /* A proxy-mode stream aimed at the discard port. Nothing needs to listen: UDP sends
  * succeed or fail locally, and these tests are about what nm_open and nm_push decide. */
-static nm_stream *open_proxy(const char *const *names, size_t count, size_t capacity,
-                             nm_status *status)
+static nm_stream *open_proxy_tagged(const char *const *names, size_t count,
+                                    const nm_tag *tags, size_t tag_count,
+                                    size_t capacity, nm_status *status)
 {
     nm_config cfg;
 
@@ -338,10 +394,18 @@ static nm_stream *open_proxy(const char *const *names, size_t count, size_t capa
     cfg.dataset_rid        = RID;
     cfg.channel_names      = names;
     cfg.channel_count      = count;
+    cfg.tags               = tags;
+    cfg.tag_count          = tag_count;
     cfg.capacity_rows      = capacity;
     /* Long enough that the sender cannot drain the ring between the pushes below. */
     cfg.max_batch_delay_ms = 1000;
     return nm_open(&cfg, status);
+}
+
+static nm_stream *open_proxy(const char *const *names, size_t count, size_t capacity,
+                             nm_status *status)
+{
+    return open_proxy_tagged(names, count, NULL, 0, capacity, status);
 }
 
 /*
@@ -383,9 +447,32 @@ static void test_open_refuses_a_mapping_too_large_to_send(void)
         nm_close(s);
     }
 
-    s = open_proxy(NAMES, NCH, 16, &status);
+    /* Tags travel in the HELLO too, so they count against the same packet. */
+    {
+        static char   keys[NM_FRAME_MAX_TAGS + 1][8];
+        static nm_tag many_tags[NM_FRAME_MAX_TAGS + 1];
+
+        for (i = 0; i < NM_FRAME_MAX_TAGS + 1; i++) {
+            snprintf(keys[i], sizeof keys[i], "k%u", (unsigned)i);
+            many_tags[i].key   = keys[i];
+            many_tags[i].value = "v";
+        }
+        s = open_proxy_tagged(NAMES, NCH, many_tags, NM_FRAME_MAX_TAGS + 1, 16, &status);
+        check(s == NULL && status == NM_ERR_TOO_LARGE,
+              "nm_open refuses more tags than a HELLO carries");
+        nm_close(s);
+    }
+
+    s = open_proxy_tagged(NAMES, NCH, TAGS, NTAGS, 16, &status);
     check(s != NULL && status == NM_OK, "and still opens one that fits");
     nm_close(s);
+
+    {
+        static const nm_tag empty_key[] = { { "", "A" } };
+        s = open_proxy_tagged(NAMES, NCH, empty_key, 1, 16, &status);
+        check(s == NULL && status == NM_ERR_ARG, "nm_open refuses a tag with no key");
+        nm_close(s);
+    }
 }
 
 /*
@@ -419,7 +506,7 @@ static void test_pushed_counts_rows_the_ring_refused(void)
 static void print_fixtures(void)
 {
     uint8_t  buf[NM_FRAME_MAX_BYTES];
-    uint64_t cfg = nm_frame_config_id(RID, NAMES, NCH);
+    uint64_t cfg = nm_frame_config_id(RID, NAMES, NCH, TAGS, NTAGS);
     const int64_t ts[3] = { 1000000000LL, 1000001000LL, 1000002000LL };
     const double  vals[9] = {
         1500.0,  700.0,  30.0,
@@ -432,7 +519,7 @@ static void print_fixtures(void)
     printf("\nconfig_id = 0x%016llx\n", (unsigned long long)cfg);
 
     n = nm_frame_encode_hello(buf, sizeof buf, 0x1122334455667788ULL, cfg,
-                              RID, NAMES, NCH);
+                              RID, NAMES, NCH, TAGS, NTAGS);
     dump_fixture("HELLO", buf, n);
 
     n = nm_frame_encode_data(buf, sizeof buf, 0x1122334455667788ULL, cfg, 42ULL,

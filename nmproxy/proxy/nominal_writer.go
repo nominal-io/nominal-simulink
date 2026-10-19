@@ -42,7 +42,8 @@ func NewNominalWriter(cfg Config, log *slog.Logger) (*NominalWriter, error) {
 	return &NominalWriter{client: client, log: log}, nil
 }
 
-func (w *NominalWriter) Open(datasetRID string, channels []string, onError func(error)) (Stream, error) {
+func (w *NominalWriter) Open(datasetRID string, channels []string, tags map[string]string,
+	onError func(error)) (Stream, error) {
 	ds, errCh, err := w.client.NewDatasetStream(context.Background(), datasetRID)
 	if err != nil {
 		return nil, fmt.Errorf("opening a stream for %s: %w", datasetRID, err)
@@ -60,7 +61,7 @@ func (w *NominalWriter) Open(datasetRID string, channels []string, onError func(
 	// One typed stream per channel, resolved once. Frames carry channel *indices*, so
 	// doing this up front means the receive path never looks a name up.
 	for i, name := range channels {
-		s.channels[i] = ds.FloatStream(name)
+		s.channels[i] = ds.FloatStream(name, nominal.WithTags(tags))
 	}
 
 	// The client reports write failures on errCh and drops the oldest when it is full.
@@ -77,7 +78,7 @@ func (w *NominalWriter) Open(datasetRID string, channels []string, onError func(
 	w.streams = append(w.streams, s)
 	w.mu.Unlock()
 
-	w.log.Info("stream opened", "dataset", datasetRID, "channels", len(channels))
+	w.log.Info("stream opened", "dataset", datasetRID, "channels", len(channels), "tags", tags)
 	return s, nil
 }
 

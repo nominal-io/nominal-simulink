@@ -95,6 +95,32 @@ classdef SinkBlockTest < BlocksetTestCase
             end
         end
 
+        function proxyHelloCarriesTheTags(tc)
+            % The relay learns a run's tags only from its HELLO frames, so decode what the
+            % block actually sends.
+            [model, blk] = SinkBlockTest.proxyModel('nm_sink_tagged');
+            set_param(blk, 'tags', '["model" "A"; "execution-id" "7"]');
+            frames = SinkBlockTest.capture(tc, model, blk);
+
+            hello = frames(strcmp({frames.type}, 'hello'));
+            tc.assertNotEmpty(hello, 'the block sent no HELLO.');
+            tc.verifyEqual(hello(1).tags, {'model', 'A'; 'execution-id', '7'});
+        end
+
+        function zeroTimeStampsFromZero(tc)
+            % With t0=0, every run's first row is at 0 and the rest follow at the sample
+            % time, exactly, so two runs line up point for point.
+            [model, blk] = SinkBlockTest.proxyModel('nm_sink_zero');
+            set_param(blk, 'tags', '["model" "A"]', ...
+                'timeMode', 'Directly record simulation time (t0=0)');
+            frames = SinkBlockTest.capture(tc, model, blk);
+
+            data = frames(strcmp({frames.type}, 'data'));
+            tc.assertNotEmpty(data, 'the block sent no rows.');
+            times = vertcat(data.timestamps);
+            tc.verifyEqual(times, int64((0:numel(times) - 1)' * 1e7));
+        end
+
         function runsInAcceleratorMode(tc)
             % Accelerator mode compiles the model into a MEX of its own, which calls back
             % into the S-function. It needs no Simulink Coder licence, so any user can
@@ -136,6 +162,42 @@ classdef SinkBlockTest < BlocksetTestCase
             add_block('simulink/Sources/Constant', [model '/src'], 'Value', '[1 2 3]');
             add_line(model, 'src/1', 'sink/1');
         end
+
+        function frames = capture(tc, model, blk)
+        % Run a proxy-mode model against a socket on this computer and decode every frame
+        % it sent. The frames wait in the socket's buffer until the run ends.
+            tc.applyFixture(matlab.unittest.fixtures.PathFixture( ...
+                fullfile(fileparts(fileparts(fileparts(mfilename('fullpath')))), 'matlab')));
+            sock = java.net.DatagramSocket(0, java.net.InetAddress.getByName('127.0.0.1'));
+            tc.addTeardown(@() sock.close());
+            sock.setSoTimeout(500);
+
+            set_param(blk, 'proxyPort', num2str(sock.getLocalPort()));
+            sim(model);
+
+            frames = struct('type', {}, 'tags', {}, 'timestamps', {});
+            pkt = java.net.DatagramPacket(zeros(1, 1500, 'int8'), 1500);
+            while true
+                try
+                    sock.receive(pkt);
+                catch
+                    break;   % timed out: everything the run sent has been read
+                end
+                bytes = typecast(pkt.getData(), 'uint8');
+                f = nmframe_decode(bytes(1:pkt.getLength()));
+                frames(end + 1) = struct('type', f.type, ...
+                    'tags', {fieldOr(f, 'tags')}, ...
+                    'timestamps', fieldOr(f, 'timestamps')); %#ok<AGROW>
+            end
+        end
+    end
+end
+
+function v = fieldOr(s, name)
+    if isfield(s, name)
+        v = s.(name);
+    else
+        v = [];
     end
 end
 

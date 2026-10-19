@@ -125,7 +125,7 @@ time=<time> level=INFO msg=stats configs=1 sessions=1 rows=30000 gaps=0 reorders
 
 | Field | Counts |
 |---|---|
-| `configs` | Channel lists the relay has registered, one per dataset and list of channel names. |
+| `configs` | Channel lists the relay has registered, one per dataset, list of channel names and set of tags. |
 | `sessions` | Model runs the relay is tracking. |
 | `rows` | Rows received. |
 | `gaps` | Packets that were missing when a later packet arrived. |

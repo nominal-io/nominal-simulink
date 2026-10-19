@@ -15,12 +15,19 @@ or less is replaced with `0.001`.
 
 ## The time on each point
 
-**Timestamps** has two options.
+**Timestamps** has three options.
 
 **Simulation time from start**, the default, stamps each row with the time the run started plus
 the row's simulation time. Points keep the model's time axis however fast the simulation runs,
 so a 60-second simulation that finishes in one second still covers 60 seconds in Nominal. Use it
 for simulations that run faster or slower than real time.
+
+**Directly record simulation time (t0=0)** stamps each row with its simulation time alone, so
+every run of the model starts at the same instant, the Unix epoch, and runs overlay in a
+workbook without shifting. Give each run its own tags in **Tags (key and value pairs)**, such as
+an execution ID, so the dataset can tell the runs apart.
+[Simulation before hardware](site:/quickstart/quickstart/fundamentals/stories/simulation-first/)
+describes this way of organizing simulation data.
 
 **Host wall clock** stamps each row with the computer's clock at the moment the block writes it.
 Use it when the model runs in real time alongside hardware, so its points line up with data

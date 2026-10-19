@@ -41,6 +41,9 @@ const (
 	// MaxChannels is derived from the MTU, not chosen: a row is 8 bytes of timestamp
 	// plus 8 per channel, and must fit alongside the header and fixed DATA fields.
 	MaxChannels = (MaxBytes - HeaderBytes - DataFixedBytes - 8) / 8
+
+	// MaxTags is a sanity limit, like the 256-byte limit on each name.
+	MaxTags = 64
 )
 
 // Frame types.
@@ -76,6 +79,13 @@ type Hello struct {
 	Header
 	DatasetRID string
 	Channels   []string
+	Tags       []Tag // on every channel, in the order the sender listed them
+}
+
+// Tag is one key and value, such as execution-id=7.
+type Tag struct {
+	Key   string
+	Value string
 }
 
 // Data carries rows that reference channels by index into the Hello list, which is why
@@ -93,18 +103,22 @@ type Row struct {
 	Values         []float64
 }
 
-// ConfigID hashes the dataset RID and ordered channel names.
+// ConfigID hashes the dataset RID, the ordered channel names and the tags.
 //
 // FNV-1a over each field length-prefixed as a 4-byte little-endian count followed by
-// its bytes. The length prefixes are what stop {"ab","c"} and {"a","bc"} colliding.
-// A sender that computes a different value has its HELLO rejected with a warning, and
-// every DATA frame is dropped as an unknown config. This must match the C side exactly.
-// The fixture test checks it.
-func ConfigID(datasetRID string, channels []string) uint64 {
+// its bytes: the RID, each name, then each tag's key and value. The length prefixes are
+// what stop {"ab","c"} and {"a","bc"} colliding. A sender that computes a different
+// value has its HELLO rejected with a warning, and every DATA frame is dropped as an
+// unknown config. This must match the C side exactly. The fixture test checks it.
+func ConfigID(datasetRID string, channels []string, tags []Tag) uint64 {
 	h := fnv.New64a()
 	writeField(h, datasetRID)
 	for _, name := range channels {
 		writeField(h, name)
+	}
+	for _, tag := range tags {
+		writeField(h, tag.Key)
+		writeField(h, tag.Value)
 	}
 	return h.Sum64()
 }
@@ -181,7 +195,33 @@ func DecodeHello(buf []byte) (*Hello, error) {
 		channels = append(channels, name)
 	}
 
-	return &Hello{Header: h, DatasetRID: rid, Channels: channels}, nil
+	if at+2 > len(buf) {
+		return nil, ErrMalformed
+	}
+	count = int(binary.LittleEndian.Uint16(buf[at : at+2]))
+	at += 2
+	if count > MaxTags {
+		return nil, fmt.Errorf("%w: tag count %d", ErrMalformed, count)
+	}
+
+	tags := make([]Tag, 0, count)
+	for i := 0; i < count; i++ {
+		var tag Tag
+		tag.Key, at, err = readString(buf, at)
+		if err != nil {
+			return nil, err
+		}
+		if tag.Key == "" {
+			return nil, fmt.Errorf("%w: a tag with an empty key", ErrMalformed)
+		}
+		tag.Value, at, err = readString(buf, at)
+		if err != nil {
+			return nil, err
+		}
+		tags = append(tags, tag)
+	}
+
+	return &Hello{Header: h, DatasetRID: rid, Channels: channels, Tags: tags}, nil
 }
 
 // DecodeData parses a DATA body.

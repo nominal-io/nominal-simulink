@@ -52,6 +52,9 @@ endif()
 # Plain signature, not PRIVATE: matlab_add_mex already links the MEX libraries with the
 # non-keyword form, and CMake refuses to mix the two on one target.
 target_link_libraries(nominal_sink_sfun nominalstream)
+if(NOT WIN32)
+  target_link_libraries(nominal_sink_sfun m)   # llround
+endif()
 
 # Land the built block in the blockset's mex/ folder, which is what ships in the toolbox.
 set(NM_BLOCKSET_MEX "${CMAKE_CURRENT_SOURCE_DIR}/blockset/mex")

@@ -20,11 +20,12 @@ function nmframe_test()
     % shared mistake.
     wantRid       = 'ri.catalog.test.dataset.abc';
     wantChannels  = {'engine.rpm', 'engine.egt', 'engine.psi'};
+    wantTags      = {'model', 'A'; 'execution-id', '7'};
     % Hex literals, not hex2dec: hex2dec goes via double and rounds anything above 2^53,
     % which would make these expectations wrong in exactly the way the test exists to
     % catch.
     wantSession   = 0x1122334455667788u64;
-    wantConfig    = 0x19915455f27bd0f7u64;
+    wantConfig    = 0x5bbb5bdfcbf6bf55u64;
     wantSequence  = uint64(42);
     wantTimes     = int64([1000000000; 1000001000; 1000002000]);
     wantValues    = [1500.00 700.0 30.0
@@ -35,7 +36,7 @@ function nmframe_test()
     %
     % The check that matters most. If this disagrees with the C encoder, a relay that
     % uses it rejects every HELLO from a C host and no data arrives.
-    got = nmframe_configid(wantRid, wantChannels);
+    got = nmframe_configid(wantRid, wantChannels, wantTags);
     failures = report(failures, isequal(got, wantConfig), ...
         sprintf('config_id matches the C encoder (got %s)', hexOf(got)));
 
@@ -51,10 +52,11 @@ function nmframe_test()
     failures = report(failures, isequal(h.configId, wantConfig), 'HELLO carries the config id');
     failures = report(failures, strcmp(h.datasetRid, wantRid), 'HELLO carries the dataset RID');
     failures = report(failures, isequal(h.channels, wantChannels), 'HELLO carries the channel names in order');
+    failures = report(failures, isequal(h.tags, wantTags), 'HELLO carries the tags in order');
 
     % The mapping only works if the announced channels hash to the announced config.
     failures = report(failures, ...
-        isequal(nmframe_configid(h.datasetRid, h.channels), h.configId), ...
+        isequal(nmframe_configid(h.datasetRid, h.channels, h.tags), h.configId), ...
         'HELLO is internally consistent');
 
     % 3 ----------------------------------------------------------------------- DATA

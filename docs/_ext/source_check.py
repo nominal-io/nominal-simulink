@@ -12,6 +12,7 @@ in the same commit as the string.
                      why a stream can't open, and "Last error"    cstream/src/nominal_stream.c,
                                                                   cstream/src/nm_http.c
                      the Detect button's errors                   simulink/**/nominal_sink_autonames.m
+                     the Tags field's errors                      simulink/**/nominal_sink_tags.m
     ref/nmproxy.md   the relay's log messages and warnings        nmproxy/**/*.go
                      the errors that stop it                      nmproxy/proxy/config.go,
                                                                   nmproxy/proxy/server.go
@@ -41,6 +42,7 @@ FRAME_LIMITS = {
     "NM_FRAME_DATA_FIXED_BYTES": 12,
     "NM_FRAME_MAX_NAME_BYTES": 256,
     "NM_FRAME_MAX_RID_BYTES": 256,
+    "NM_FRAME_MAX_TAGS": 64,
 }
 MAX_CHANNELS = 169  # derived in nm_frame.h from the limits above
 HELLO_INTERVAL_MS = 1000  # nominal_stream.c; the pages say the channel list repeats every second
@@ -187,8 +189,12 @@ def problems(root: Path, docs: Path) -> list[str]:
         source = root / "nmproxy" / "proxy" / go
         require("nmproxy", _go_errors(source.read_text(encoding="utf-8")), source)
 
-    if autonames := one("simulink/**/nominal_sink_autonames.m"):
-        require("messages", _matlab_errors(autonames.read_text(encoding="utf-8")), autonames)
+    # The page leaves off the "Nominal Stream Sink: " the run-time errors start with.
+    for name in ("nominal_sink_autonames.m", "nominal_sink_tags.m"):
+        if helper := one(f"simulink/**/{name}"):
+            messages = _matlab_errors(helper.read_text(encoding="utf-8"))
+            messages = [m.removeprefix("Nominal Stream Sink: ") for m in messages]
+            require("messages", messages, helper)
 
     for go in sorted((root / "nmproxy").rglob("*.go")):
         if not go.name.endswith("_test.go"):

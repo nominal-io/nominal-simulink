@@ -16,7 +16,7 @@
  * Automatic channel configuration is the property worth protecting, so the format is
  * built around it. Two frame types:
  *
- *   HELLO  session, config_id, dataset RID, ordered channel names.
+ *   HELLO  session, config_id, dataset RID, ordered channel names, tags.
  *   DATA   session, config_id, sequence, rows of (timestamp, values[]).
  *
  * DATA references channels by index into the HELLO list, never by name, so a row costs
@@ -27,7 +27,7 @@
  * way to recover the mapping. There is no back-channel to ask over, so periodic HELLO is
  * what makes the system self-healing.
  *
- * config_id is a hash of the channel list plus the RID. A proxy seeing a DATA frame with
+ * config_id is a hash of the RID, the channel list and the tags. A proxy seeing a DATA frame with
  * an unknown config_id discards it and waits for the next HELLO — bounded loss after a
  * restart. It also makes a *changed* channel list unambiguous rather than silently
  * misaligning columns, which is the failure mode that would otherwise produce
@@ -53,6 +53,8 @@
 
 #include <stdint.h>
 #include <stddef.h>
+
+#include "nominal_stream.h"   /* nm_tag */
 
 /*
  * Magic, checked before anything else is trusted.
@@ -97,9 +99,10 @@
     (((NM_FRAME_MAX_BYTES - NM_FRAME_HEADER_BYTES - NM_FRAME_DATA_FIXED_BYTES - 8u) / 8u))
 
 /* Per-field sanity limits. The frame size bounds the totals; these only stop a single
- * absurd name or RID. */
+ * absurd name, RID or tag. A tag's key and value are each held to the name limit. */
 #define NM_FRAME_MAX_NAME_BYTES 256
 #define NM_FRAME_MAX_RID_BYTES  256
+#define NM_FRAME_MAX_TAGS       64
 
 typedef enum {
     NM_FRAME_HELLO = 1,
@@ -116,7 +119,7 @@ typedef enum {
  *   5      1    type        nm_frame_type
  *   6      2    reserved    zero
  *   8      8    session_id  unique per stream; distinguishes concurrent models
- *   16     8    config_id   hash of the channel list and RID
+ *   16     8    config_id   hash of the RID, channel list and tags
  */
 
 typedef struct {
@@ -141,11 +144,15 @@ typedef struct {
  *   version       = OCTET           ; NM_FRAME_VERSION; a decoder rejects others
  *   reserved      = 2OCTET          ; zero
  *   session-id    = u64             ; distinguishes concurrent models
- *   config-id     = u64             ; hash of the RID and channel names
+ *   config-id     = u64             ; hash of the RID, channel names and tags
  *
- *   hello-body    = rid channel-count *channel-name
+ *   hello-body    = rid channel-count *channel-name tag-count *tag
  *   rid           = length *OCTET   ; not NUL-terminated
  *   channel-name  = length *OCTET   ; not NUL-terminated
+ *   tag-count     = u16
+ *   tag           = tag-key tag-value
+ *   tag-key       = length 1*OCTET  ; not NUL-terminated, not empty
+ *   tag-value     = length *OCTET   ; not NUL-terminated
  *
  *   data-body     = sequence channel-count row-count *row
  *   sequence      = u64             ; per-session, monotonic; gaps are loss
@@ -167,12 +174,14 @@ typedef struct {
  * earlier in the same frame. That is a context-sensitive dependency, so no context-free
  * grammar can state it:
  *
- *   1. hello-body contains exactly channel-count occurrences of channel-name.
+ *   1. hello-body contains exactly channel-count occurrences of channel-name, and
+ *      exactly tag-count occurrences of tag.
  *   2. data-body contains exactly row-count occurrences of row.
  *   3. each row contains exactly channel-count occurrences of value.
  *   4. channel-count in a data-frame must equal the channel-count of the hello-frame
  *      bearing the same config-id.
- *   5. no frame exceeds NM_FRAME_MAX_BYTES, and channel-count <= NM_FRAME_MAX_CHANNELS.
+ *   5. no frame exceeds NM_FRAME_MAX_BYTES, channel-count <= NM_FRAME_MAX_CHANNELS, and
+ *      tag-count <= NM_FRAME_MAX_TAGS.
  *
  * This is precisely why a decoder must check every length against the bytes actually
  * received rather than trusting the grammar: a frame can be perfectly well-formed
@@ -188,12 +197,14 @@ typedef struct {
 /* Rows that fit one datagram, given a channel count. Zero if a single row cannot. */
 size_t nm_frame_rows_per_datagram(size_t channel_count);
 
-/* Stable hash of the channel list and RID, for config_id. Must be reproducible by every
- * implementation, so the algorithm is fixed: FNV-1a over RID then each name, each
- * preceded by its length as a little-endian u32 to keep boundaries unambiguous. */
+/* Stable hash of the RID, channel list and tags, for config_id. Must be reproducible by
+ * every implementation, so the algorithm is fixed: FNV-1a over the RID, each name, then
+ * each tag's key and value, each string preceded by its length as a little-endian u32 to
+ * keep boundaries unambiguous. With no tags it is the hash of the RID and names alone. */
 uint64_t nm_frame_config_id(const char *dataset_rid,
                             const char *const *channel_names,
-                            size_t channel_count);
+                            size_t channel_count,
+                            const nm_tag *tags, size_t tag_count);
 
 /*
  * Encode a HELLO. Returns bytes written, or 0 if it would not fit or an argument is
@@ -203,7 +214,8 @@ size_t nm_frame_encode_hello(uint8_t *buf, size_t buf_len,
                              uint64_t session_id, uint64_t config_id,
                              const char *dataset_rid,
                              const char *const *channel_names,
-                             size_t channel_count);
+                             size_t channel_count,
+                             const nm_tag *tags, size_t tag_count);
 
 /*
  * Encode a DATA frame from row-major values — the same layout the ring stores and the
@@ -240,6 +252,9 @@ typedef struct {
     nm_frame_str dataset_rid;
     nm_frame_str channels[NM_FRAME_MAX_CHANNELS];
     size_t       channel_count;
+    nm_frame_str tag_keys[NM_FRAME_MAX_TAGS];
+    nm_frame_str tag_values[NM_FRAME_MAX_TAGS];
+    size_t       tag_count;
 } nm_frame_hello;
 
 int nm_frame_decode_hello(const uint8_t *buf, size_t len, nm_frame_hello *out);

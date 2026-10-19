@@ -4,10 +4,11 @@
 The UDP packets the block sends to `nmproxy` in proxy mode, for anyone writing their own sender
 or relay.
 
-Each UDP packet holds one frame. A frame is either a HELLO, which announces a dataset RID and an
-ordered list of channel names, or a DATA frame, which carries rows: a timestamp and one value per
-channel, in the HELLO's order. Both carry a `config_id`, a hash of the RID and the channel names,
-and a DATA frame is matched to its HELLO through the `config_id`.
+Each UDP packet holds one frame. A frame is either a HELLO, which announces a dataset RID, an
+ordered list of channel names and the tags every channel carries, or a DATA frame, which carries
+rows: a timestamp and one value per channel, in the HELLO's order. Both carry a `config_id`, a
+hash of the RID, the channel names and the tags, and a DATA frame is matched to its HELLO through
+the `config_id`.
 
 A sender sends a HELLO when it starts and repeats it every second for as long as it runs. A
 relay that starts, or restarts, partway through a run learns the channel list within a second,
@@ -31,7 +32,7 @@ Both frame types start with the same 24-byte header:
 | 5 | 1 | type | `1` for HELLO, `2` for DATA |
 | 6 | 2 | reserved | `0` |
 | 8 | 8 | session_id | Distinguishes runs. Any value that differs between concurrent runs. |
-| 16 | 8 | config_id | The [hash](#config-id) of the dataset RID and channel names |
+| 16 | 8 | config_id | The [hash](#config-id) of the dataset RID, channel names and tags |
 
 In ABNF ([RFC 5234](https://www.rfc-editor.org/rfc/rfc5234)), where `nOCTET` is exactly n
 octets and `%xNN` a literal octet:
@@ -41,12 +42,13 @@ octets and `%xNN` a literal octet:
 
 The grammar can't express these rules, which every frame also follows:
 
-1. A HELLO has exactly `channel-count` channel names.
+1. A HELLO has exactly `channel-count` channel names and exactly `tag-count` tags.
 2. A DATA frame has exactly `row-count` rows.
 3. Each row has exactly `channel-count` values.
 4. A DATA frame's `channel-count` equals that of the HELLO with the same `config_id`.
 5. No frame is longer than 1400 bytes.
-6. `channel-count` is 1 to 169, and a DATA frame's `row-count` is at least 1.
+6. `channel-count` is 1 to 169, `tag-count` is at most 64, and a DATA frame's `row-count` is
+   at least 1.
 
 A decoder has to check every count against the bytes it actually received. A frame can match
 the grammar and still claim more rows than it carries.
@@ -61,14 +63,15 @@ first DATA frame of a session can carry any sequence number.
 (config-id)=
 ## config_id
 
-`config_id` is the 64-bit FNV-1a hash of the dataset RID followed by each channel name in order.
-Each of those strings goes into the hash preceded by its length as a 4-byte little-endian
-integer, which keeps `["ab", "c"]` and `["a", "bc"]` apart. That length prefix is 4 bytes,
-unlike the 2-byte lengths in the frame itself.
+`config_id` is the 64-bit FNV-1a hash of the dataset RID, followed by each channel name in
+order, then each tag's key and value in order. Each of those strings goes into the hash preceded
+by its length as a 4-byte little-endian integer, which keeps `["ab", "c"]` and `["a", "bc"]`
+apart. That length prefix is 4 bytes, unlike the 2-byte lengths in the frame itself. With no
+tags, the hash covers the RID and names alone.
 
 ```
 h = 0xcbf29ce484222325                        offset basis
-for each string s in [rid, name1, name2, ...]:
+for each string s in [rid, name1, name2, ..., key1, value1, key2, value2, ...]:
     for each byte b in u32_le(len(s)) followed by the bytes of s:
         h = (h XOR b) * 0x100000001b3         modulo 2^64
 ```
@@ -86,12 +89,14 @@ after the header and the fixed DATA fields:
 
 A DATA frame holds ⌊1364 ÷ (8 + 8 × channels)⌋ rows, which is 42 rows at 3 channels.
 
-A HELLO holds the whole channel list. A sender doesn't split a channel list across frames, so it
-has to fit in one:
+A HELLO holds the whole channel list and every tag. A sender doesn't split them across frames,
+so they have to fit in one:
 
-28 + (RID length) + the sum over channels of (2 + name length) ≤ 1400
+30 + (RID length) + the sum over channels of (2 + name length) + the sum over tags of
+(4 + key length + value length) ≤ 1400
 
-The RID and each name can be at most 256 bytes.
+The RID, each name, each tag key and each tag value can be at most 256 bytes, and a HELLO carries
+at most 64 tags.
 
 ## Example
 
@@ -102,12 +107,13 @@ tested against. They encode this input:
 |---|---|
 | dataset RID | `ri.catalog.test.dataset.abc` |
 | channels | `engine.rpm`, `engine.egt`, `engine.psi` |
+| tags | `model` = `A`, `execution-id` = `7` |
 | session_id | `0x1122334455667788` |
-| config_id | `0x19915455f27bd0f7` |
+| config_id | `0x5bbb5bdfcbf6bf55` |
 | sequence | 42 |
 | rows | 1000000000: 1500.0, 700.0, 30.0<br>1000001000: 1510.5, 701.5, 30.1<br>1000002000: 1521.25, 703.0, 30.2 |
 
-The HELLO, 91 bytes:
+The HELLO, 120 bytes:
 
 ```
 4e4d5331                    magic "NMS1"
@@ -115,7 +121,7 @@ The HELLO, 91 bytes:
 01                          type HELLO
 0000                        reserved
 8877665544332211            session_id
-f7d07bf255549119            config_id
+55bff6cbdf5bbb5b            config_id
 1b00                        RID length 27
 72692e636174616c6f672e746573742e646174617365742e616263
                             "ri.catalog.test.dataset.abc"
@@ -123,6 +129,12 @@ f7d07bf255549119            config_id
 0a00 656e67696e652e72706d   "engine.rpm"
 0a00 656e67696e652e656774   "engine.egt"
 0a00 656e67696e652e707369   "engine.psi"
+0200                        2 tags
+0500 6d6f64656c             key "model"
+0100 41                     value "A"
+0c00 657865637574696f6e2d6964
+                            key "execution-id"
+0100 37                     value "7"
 ```
 
 The DATA frame, 132 bytes:
@@ -130,7 +142,7 @@ The DATA frame, 132 bytes:
 ```
 4e4d5331 01 02 0000         magic, version 1, type DATA, reserved
 8877665544332211            session_id
-f7d07bf255549119            config_id
+55bff6cbdf5bbb5b            config_id
 2a00000000000000            sequence 42
 0300                        3 channels
 0300                        3 rows

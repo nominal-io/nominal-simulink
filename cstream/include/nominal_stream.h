@@ -44,7 +44,7 @@ typedef enum {
     NM_ERR_TRANSPORT   = -4,  /* the HTTPS client or the relay socket could not be set up */
     NM_ERR_CLOSED      = -5,  /* reserved, not returned by any function */
     NM_ERR_TOO_LARGE   = -6   /* PROXY: too many channels for one row to fit a datagram,
-                               * or the RID and names do not fit one HELLO datagram */
+                               * or the RID, names and tags do not fit one HELLO datagram */
 } nm_status;
 
 typedef struct nm_stream nm_stream;
@@ -67,6 +67,12 @@ typedef enum {
     NM_MODE_DIRECT = 0,
     NM_MODE_PROXY  = 1
 } nm_mode;
+
+/* One tag, such as {"execution-id", "7"}. */
+typedef struct {
+    const char *key;
+    const char *value;
+} nm_tag;
 
 typedef struct {
     nm_mode mode;
@@ -92,6 +98,12 @@ typedef struct {
      * no string work on the hot path. */
     const char *const *channel_names;
     size_t             channel_count;
+
+    /* Tags on every channel this stream writes. They are what keep many runs of a model
+     * apart in one dataset. Copied at open, like the names. Keys can't be empty. NULL
+     * when tag_count is 0. In PROXY mode they travel in the HELLO frame. */
+    const nm_tag *tags;
+    size_t        tag_count;
 
     /* Rows of capacity to reserve. One row is one timestamp plus one value per
      * channel. The buffer never grows past this: nm_push discards rows instead. Size

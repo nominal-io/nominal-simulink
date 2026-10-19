@@ -135,7 +135,8 @@ static uint64_t fnv1a_field(uint64_t h, const char *s)
 
 uint64_t nm_frame_config_id(const char *dataset_rid,
                             const char *const *channel_names,
-                            size_t channel_count)
+                            size_t channel_count,
+                            const nm_tag *tags, size_t tag_count)
 {
     uint64_t h = FNV_OFFSET;
     size_t   i;
@@ -144,10 +145,33 @@ uint64_t nm_frame_config_id(const char *dataset_rid,
     for (i = 0; i < channel_count; i++) {
         h = fnv1a_field(h, channel_names != NULL ? channel_names[i] : NULL);
     }
+    for (i = 0; i < tag_count && tags != NULL; i++) {
+        h = fnv1a_field(h, tags[i].key);
+        h = fnv1a_field(h, tags[i].value);
+    }
     return h;
 }
 
 /* --------------------------------------------------------------- encoding */
+
+/* Append a length-prefixed string, or return 0 if it would pass `limit` bytes or the
+ * end of the buffer. */
+static size_t put_string(uint8_t *buf, size_t buf_len, size_t at,
+                         const char *s, size_t limit)
+{
+    size_t n;
+
+    if (s == NULL) {
+        return 0;
+    }
+    n = strlen(s);
+    if (n > limit || at + 2 + n > buf_len) {
+        return 0;
+    }
+    put_u16(buf + at, (uint16_t)n);
+    memcpy(buf + at + 2, s, n);
+    return at + 2 + n;
+}
 
 static size_t write_header(uint8_t *buf, size_t buf_len, uint8_t type,
                            uint64_t session_id, uint64_t config_id)
@@ -168,12 +192,14 @@ size_t nm_frame_encode_hello(uint8_t *buf, size_t buf_len,
                              uint64_t session_id, uint64_t config_id,
                              const char *dataset_rid,
                              const char *const *channel_names,
-                             size_t channel_count)
+                             size_t channel_count,
+                             const nm_tag *tags, size_t tag_count)
 {
     size_t at, rid_len, i;
 
     if (buf == NULL || dataset_rid == NULL || channel_names == NULL ||
-        channel_count == 0 || channel_count > NM_FRAME_MAX_CHANNELS) {
+        channel_count == 0 || channel_count > NM_FRAME_MAX_CHANNELS ||
+        tag_count > NM_FRAME_MAX_TAGS || (tag_count > 0 && tags == NULL)) {
         return 0;
     }
     rid_len = strlen(dataset_rid);
@@ -219,6 +245,26 @@ size_t nm_frame_encode_hello(uint8_t *buf, size_t buf_len,
         at += 2;
         memcpy(buf + at, channel_names[i], n);
         at += n;
+    }
+
+    if (at + 2 > buf_len) {
+        return 0;
+    }
+    put_u16(buf + at, (uint16_t)tag_count);
+    at += 2;
+
+    for (i = 0; i < tag_count; i++) {
+        if (tags[i].key == NULL || tags[i].key[0] == '\0') {
+            return 0;
+        }
+        at = put_string(buf, buf_len, at, tags[i].key, NM_FRAME_MAX_NAME_BYTES);
+        if (at == 0) {
+            return 0;
+        }
+        at = put_string(buf, buf_len, at, tags[i].value, NM_FRAME_MAX_NAME_BYTES);
+        if (at == 0) {
+            return 0;
+        }
     }
 
     return at;
@@ -312,6 +358,25 @@ int nm_frame_decode_header(const uint8_t *buf, size_t len, nm_frame_header *out)
     return 0;
 }
 
+/* Read a length-prefixed string at *at, advancing past it. */
+static int read_string(const uint8_t *buf, size_t len, size_t *at, nm_frame_str *out)
+{
+    size_t n;
+
+    if (*at + 2 > len) {
+        return -1;
+    }
+    n = get_u16(buf + *at);
+    *at += 2;
+    if (*at + n > len) {
+        return -1;
+    }
+    out->ptr = (const char *)(buf + *at);
+    out->len = n;
+    *at += n;
+    return 0;
+}
+
 int nm_frame_decode_hello(const uint8_t *buf, size_t len, nm_frame_hello *out)
 {
     nm_frame_header h;
@@ -363,6 +428,24 @@ int nm_frame_decode_hello(const uint8_t *buf, size_t len, nm_frame_hello *out)
         at += n;
     }
     out->channel_count = count;
+
+    if (at + 2 > len) {
+        return -1;
+    }
+    count = get_u16(buf + at);
+    at += 2;
+    if (count > NM_FRAME_MAX_TAGS) {
+        return -1;
+    }
+
+    for (i = 0; i < count; i++) {
+        if (read_string(buf, len, &at, &out->tag_keys[i]) != 0 ||
+            out->tag_keys[i].len == 0 ||
+            read_string(buf, len, &at, &out->tag_values[i]) != 0) {
+            return -1;
+        }
+    }
+    out->tag_count = count;
     return 0;
 }
 

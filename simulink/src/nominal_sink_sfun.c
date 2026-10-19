@@ -32,6 +32,7 @@
 
 #include "nominal_stream.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -55,11 +56,12 @@ enum {
     P_BASE_URL,       /* API root */
     P_SAMPLE_TIME,    /* seconds between writes (decimation, not the solver step) */
     P_CAPACITY,       /* ring capacity in rows */
-    P_TIME_MODE,      /* 1 = simulation time from an epoch, 2 = host wall clock */
+    P_TIME_MODE,      /* one of the TIME_MODE_ values below */
     P_SHOW_DROPPED,   /* non-zero adds an output port carrying the discarded-row count */
     P_MODE,           /* 1 = direct HTTPS, 2 = frames to a relay */
     P_PROXY_HOST,
     P_PROXY_PORT,
+    P_TAGS,           /* key US value RS key US value ..., from nominal_sink_tags */
     P_COUNT
 };
 
@@ -67,7 +69,15 @@ enum {
  * index. Keeping the C side aligned with the mask avoids an off-by-one that would
  * silently pick the wrong transport or clock. */
 enum { MODE_DIRECT = 1, MODE_PROXY = 2 };
-enum { TIME_MODE_SIM = 1, TIME_MODE_WALL = 2 };
+enum {
+    TIME_MODE_SIM      = 1,   /* the run's start time plus simulation time */
+    TIME_MODE_SIM_ZERO = 2,   /* simulation time alone, so every run starts at 0 */
+    TIME_MODE_WALL     = 3    /* the host's clock when the row is written */
+};
+
+/* The separators nominal_sink_tags joins the Tags field with. */
+#define TAG_KEY_SEP '\x1f'
+#define TAG_SEP     '\x1e'
 
 /* Used both when sizing the ports and when opening the stream. */
 #define MSG_NO_CHANNELS "Nominal Stream Sink: the channel list is empty. Enter channel " \
@@ -210,6 +220,53 @@ static size_t split_names(const char *csv, char **storage, char ***names)
     return count;
 }
 
+/*
+ * Split the Tags parameter into tags that point into `text`, which this modifies.
+ * nominal_sink_tags has already checked every key and value, so this only has to undo
+ * the joining. Returns the count, which is 0 for no tags or if allocation fails. The
+ * caller frees *tags.
+ */
+static size_t split_tags(char *text, nm_tag **tags)
+{
+    size_t count = 0, i = 0;
+    char  *p;
+
+    *tags = NULL;
+    if (text == NULL || text[0] == '\0') {
+        return 0;
+    }
+    for (p = text; *p != '\0'; p++) {
+        if (*p == TAG_SEP) {
+            count++;
+        }
+    }
+    count++;
+
+    *tags = calloc(count, sizeof **tags);
+    if (*tags == NULL) {
+        return 0;
+    }
+
+    p = text;
+    while (p != NULL && i < count) {
+        char *end = strchr(p, TAG_SEP);
+        char *sep;
+
+        if (end != NULL) {
+            *end = '\0';
+        }
+        sep = strchr(p, TAG_KEY_SEP);
+        if (sep != NULL) {
+            *sep = '\0';
+            (*tags)[i].key   = p;
+            (*tags)[i].value = sep + 1;
+            i++;
+        }
+        p = end != NULL ? end + 1 : NULL;
+    }
+    return i;
+}
+
 /* ------------------------------------------------------------------ S-function */
 
 static void mdlInitializeSizes(SimStruct *S)
@@ -324,6 +381,8 @@ static void mdlStart(SimStruct *S)
     size_t      count = 0;
     const char *token;
     char       *proxy_host = NULL;
+    char       *tag_text = NULL;
+    nm_tag     *tags = NULL;
     int         mode;
 
     ssSetPWorkValue(S, 0, NULL);
@@ -384,6 +443,10 @@ static void mdlStart(SimStruct *S)
     cfg.channel_names = (const char *const *)names;
     cfg.channel_count = count;
 
+    tag_text      = param_string(S, P_TAGS);
+    cfg.tag_count = split_tags(tag_text, &tags);
+    cfg.tags      = tags;
+
     if (mode == MODE_PROXY) {
         double port = mxGetScalar(ssGetSFcnParam(S, P_PROXY_PORT));
 
@@ -429,9 +492,9 @@ static void mdlStart(SimStruct *S)
         static char msg[384];
         if (status == NM_ERR_TOO_LARGE) {
             snprintf(msg, sizeof msg,
-                     "Nominal Stream Sink: in proxy mode, the dataset RID and channel names "
-                     "have to fit in one 1400-byte packet to the relay, and these don't. "
-                     "Use fewer or shorter channel names.");
+                     "Nominal Stream Sink: in proxy mode, the dataset RID, channel names and "
+                     "tags have to fit in one 1400-byte packet to the relay, and these don't. "
+                     "Use fewer or shorter channel names or tags.");
         } else if (mode == MODE_PROXY && status == NM_ERR_TRANSPORT) {
             snprintf(msg, sizeof msg,
                      "Nominal Stream Sink: could not set up sending to Proxy host '%s'. "
@@ -453,6 +516,8 @@ cleanup:
     free(rid);
     free(url);
     free(proxy_host);
+    free(tag_text);
+    free(tags);
     free(names);
     free(storage);
 }
@@ -479,12 +544,17 @@ static void mdlOutputs(SimStruct *S, int_T tid)
 
     u = ssGetInputPortRealSignal(S, 0);
 
+    /* Rounded, not truncated: 0.03 s is a hair under 3e7 ns as a double, and truncating
+     * it would stamp the row 1 ns early. */
     if (st->time_mode == TIME_MODE_WALL) {
         ts = nm_now_nanos();
+    } else if (st->time_mode == TIME_MODE_SIM_ZERO) {
+        /* Simulation time alone, so every run of a model lines up from 0. */
+        ts = (int64_t)llround(ssGetT(S) * 1.0e9);
     } else {
         /* Simulation time against the epoch captured at start. Faster-than-real-time
          * runs therefore produce a time axis that matches the model, not the clock. */
-        ts = st->epoch_nanos + (int64_t)(ssGetT(S) * 1.0e9);
+        ts = st->epoch_nanos + (int64_t)llround(ssGetT(S) * 1.0e9);
     }
 
     nm_push(st->stream, ts, u, st->channel_count);

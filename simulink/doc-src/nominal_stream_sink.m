@@ -85,6 +85,15 @@
 %
 % Programmatic name: |datasetRid|. Default: |''|.
 %
+% *Tags (key and value pairs)* — tags on every channel
+%
+% Tags keep the runs of one model apart in a dataset they share. Enter a two-column
+% string array with one row per tag, such as |["model" "A"; "execution-id" "7"]|, a cell
+% array of the same shape, a |dictionary| or a |containers.Map|. A value can be a
+% number. Keys can't be empty or repeat.
+%
+% Programmatic name: |tags|. Default: |[]|, no tags.
+%
 % *Mode* — how the data leaves the model
 %
 % *Direct to Nominal* or *Via proxy*, as described above.
@@ -133,11 +142,14 @@
 %
 % *Simulation time from start* stamps each row with the time the run started plus the
 % row's simulation time, so the points keep the model's time axis however fast the
-% simulation runs. *Host wall clock* stamps each row with the computer's clock when the
-% block writes it. Use it when the model runs in real time alongside hardware.
+% simulation runs. *Directly record simulation time (t0=0)* stamps each row with its
+% simulation time alone, so every run starts at the same instant, the Unix epoch, and
+% runs overlay without shifting. Give each run its own tags so the dataset can tell them
+% apart. *Host wall clock* stamps each row with the computer's clock when the block writes
+% it. Use it when the model runs in real time alongside hardware.
 %
 % Programmatic name: |timeMode|. Values: |'Simulation time from start'| (default),
-% |'Host wall clock'|.
+% |'Directly record simulation time (t0=0)'|, |'Host wall clock'|.
 %
 % *Add an output port with the discarded-row count* — show drops while the model runs
 %

@@ -1,12 +1,14 @@
-function id = nmframe_configid(datasetRid, channels)
-%NMFRAME_CONFIGID  The config_id for a dataset and ordered channel list.
+function id = nmframe_configid(datasetRid, channels, tags)
+%NMFRAME_CONFIGID  The config_id for a dataset, ordered channel list and tags.
 %
-%   id = NMFRAME_CONFIGID(rid, channels) returns a uint64 matching what the C and Go
-%   implementations compute for the same input. `channels` is a cellstr, in order.
+%   id = NMFRAME_CONFIGID(rid, channels, tags) returns a uint64 matching what the C and
+%   Go implementations compute for the same input. `channels` is a cellstr, in order.
+%   `tags` is an N-by-2 cell array of {key, value} rows, in order, and can be omitted
+%   when there are none.
 %
 %   FNV-1a over each field length-prefixed as a 4-byte little-endian count followed by
-%   its bytes: first the RID, then each channel name. The length prefixes are what stop
-%   {'ab','c'} and {'a','bc'} hashing the same.
+%   its bytes: first the RID, then each channel name, then each tag's key and value. The
+%   length prefixes are what stop {'ab','c'} and {'a','bc'} hashing the same.
 %
 %       h = 0xcbf29ce484222325
 %       for each byte b:  h = (h XOR b) * 0x100000001b3   (mod 2^64)
@@ -32,6 +34,9 @@ function id = nmframe_configid(datasetRid, channels)
     if nargin < 2
         channels = {};
     end
+    if nargin < 3
+        tags = cell(0, 2);
+    end
     if ischar(channels)
         channels = {channels};
     end
@@ -39,6 +44,10 @@ function id = nmframe_configid(datasetRid, channels)
     h = hashField(OFFSET, PRIME, datasetRid);
     for i = 1:numel(channels)
         h = hashField(h, PRIME, channels{i});
+    end
+    for i = 1:size(tags, 1)
+        h = hashField(h, PRIME, tags{i, 1});
+        h = hashField(h, PRIME, tags{i, 2});
     end
     id = h;
 end

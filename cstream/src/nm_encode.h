@@ -25,10 +25,7 @@
 #include <stdint.h>
 #include <stddef.h>
 
-typedef struct {
-    const char *key;
-    const char *value;
-} nm_tag;
+#include "nominal_stream.h"   /* nm_tag */
 
 typedef struct {
     const char   *name;   /* channel name, as it will appear in Nominal */

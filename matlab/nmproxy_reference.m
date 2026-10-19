@@ -99,16 +99,21 @@ function stats = nmproxy_reference(varargin)
                     % Optional but worth doing once. Without this check a sender whose
                     % hash disagrees with ours would work here, because configs are
                     % keyed by the id the HELLO claims, but nmproxy would reject it.
-                    if ~isequal(nmframe_configid(frame.datasetRid, frame.channels), frame.configId)
+                    if ~isequal(nmframe_configid(frame.datasetRid, frame.channels, frame.tags), ...
+                                frame.configId)
                         fprintf(['HELLO config_id does not match its contents — ' ...
                                  'the sender''s hash disagrees with ours\n']);
                         stats.badFrames = stats.badFrames + 1;
                         continue;
                     end
                     configs(key) = frame; %#ok<NASGU>
-                    fprintf('configuration registered: %s, %d channels (%s)\n', ...
+                    tags = strjoin(join(string(frame.tags), '=', 2), ', ');
+                    if isempty(frame.tags)
+                        tags = "no tags";
+                    end
+                    fprintf('configuration registered: %s, %d channels (%s), %s\n', ...
                             frame.datasetRid, numel(frame.channels), ...
-                            strjoin(frame.channels, ', '));
+                            strjoin(frame.channels, ', '), tags);
                 end
 
             case 'data'
