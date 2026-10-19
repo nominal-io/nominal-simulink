@@ -4,7 +4,7 @@
 Install the Nominal Blockset toolbox, which adds the **Nominal Stream Sink** block to Simulink.
 
 You need MATLAB R2021b or later with Simulink, on 64-bit Windows, or on 64-bit Linux with glibc
-2.28 or later.
+2.28 or later. On a Mac with Apple silicon, you need R2023b or later.
 
 Download `NominalBlockset-<version>.mltbx` from the latest release on the
 [releases page](https://github.com/nominal-io/nominal-simulink/releases), and open it in MATLAB

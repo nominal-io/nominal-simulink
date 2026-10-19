@@ -11,8 +11,8 @@ function file = package_blockset()
 %
 %   The platforms the toolbox claims follow the MEX files present: a package built on a
 %   machine with only the Windows MEX says so, rather than claiming Linux and failing
-%   there at run time. A release is packaged in CI, which builds the Windows and Linux
-%   ones. The oldest release the toolbox claims is the one that saved the library.
+%   there at run time. A release is packaged in CI, which builds the Windows, Linux and
+%   macOS ones. The oldest release the toolbox claims is the one that saved the library.
 
     % Fixed for the life of the blockset. It is how an install recognises an earlier
     % version of itself to replace, so changing it would leave users with two copies.

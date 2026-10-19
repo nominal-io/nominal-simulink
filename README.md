@@ -84,10 +84,10 @@ The library, the example model and the help pages are generated rather than comm
 block's definition stays in source that a diff can review. To use the blockset from a clone
 without installing it, run `simulink/nominal_setup.m`.
 
-`simulink/VERSION` sets the version. `.github/workflows/blockset.yml` builds the Linux
-S-function, tests the installed toolbox on both platforms and both releases, and attaches the
-toolbox to a GitHub release for each `v*` tag. It also builds the S-function on macOS, but the
-toolbox doesn't include that build.
+`simulink/VERSION` sets the version. `.github/workflows/blockset.yml` builds the S-function on
+Windows, Linux and macOS, packages all three into the toolbox, tests the installed toolbox on
+each platform in its oldest and newest release, and attaches the toolbox to a GitHub release for
+each `v*` tag.
 
 ## Debugging the block
 
