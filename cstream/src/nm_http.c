@@ -25,6 +25,19 @@ struct nm_http {
     const volatile int64_t *deadline;   /* may be NULL */
 };
 
+int nm_http_global_init(void)
+{
+    static int ready = 0;
+
+    if (!ready) {
+        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
+            return -1;
+        }
+        ready = 1;
+    }
+    return 0;
+}
+
 static int deadline_passed(const nm_http *h)
 {
     int64_t d = h->deadline != NULL ? *h->deadline : 0;

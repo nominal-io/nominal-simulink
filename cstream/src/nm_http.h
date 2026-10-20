@@ -21,6 +21,14 @@
 
 typedef struct nm_http nm_http;
 
+/*
+ * libcurl's one process-wide initialisation, done the first time any request is made.
+ * Returns 0 once it has happened, -1 if libcurl refused. Not safe to call from two
+ * threads at once, which nothing here does: streams and runs are opened from the
+ * caller's thread, never from the sender.
+ */
+int nm_http_global_init(void);
+
 typedef struct {
     long  status;          /* HTTP status, or 0 if no response was received */
     int   ok;              /* non-zero when the batch was accepted */

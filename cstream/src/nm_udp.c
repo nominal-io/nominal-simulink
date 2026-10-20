@@ -1,5 +1,6 @@
 #include "nm_udp.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,6 +30,19 @@ struct nm_udp {
     nm_socket fd;
 };
 
+/* Write a reason into the caller's buffer, if it gave one. */
+static void say(char *err, size_t err_len, const char *fmt, ...)
+{
+    va_list ap;
+
+    if (err == NULL || err_len == 0) {
+        return;
+    }
+    va_start(ap, fmt);
+    vsnprintf(err, err_len, fmt, ap);
+    va_end(ap);
+}
+
 /* Winsock needs process-wide startup. Reference-counted rather than one-shot so a
  * host that opens and closes streams repeatedly does not leave it initialised
  * forever, and so nothing breaks if the application also uses sockets. */
@@ -42,7 +56,7 @@ static int wsa_acquire(char *err, size_t err_len)
         int rc = WSAStartup(MAKEWORD(2, 2), &data);
         if (rc != 0) {
             InterlockedDecrement(&g_wsa_refs);
-            snprintf(err, err_len, "WSAStartup failed (%d)", rc);
+            say(err, err_len, "WSAStartup failed (%d)", rc);
             return -1;
         }
     }
@@ -79,11 +93,9 @@ nm_udp *nm_udp_open(const char *host, uint16_t port, char *err, size_t err_len)
     char             port_text[16];
     int              rc;
 
-    if (err != NULL && err_len > 0) {
-        err[0] = '\0';
-    }
+    say(err, err_len, "%s", "");
     if (host == NULL || host[0] == '\0' || port == 0) {
-        snprintf(err, err_len, "a relay host and port are required");
+        say(err, err_len, "a relay host and port are required");
         return NULL;
     }
 
@@ -102,13 +114,13 @@ nm_udp *nm_udp_open(const char *host, uint16_t port, char *err, size_t err_len)
 
     rc = getaddrinfo(host, port_text, &hints, &res);
     if (rc != 0 || res == NULL) {
-        snprintf(err, err_len, "could not resolve %s: %s", host, gai_strerror(rc));
+        say(err, err_len, "could not resolve %s: %s", host, gai_strerror(rc));
         goto fail;
     }
 
     u = calloc(1, sizeof *u);
     if (u == NULL) {
-        snprintf(err, err_len, "out of memory");
+        say(err, err_len, "out of memory");
         goto fail;
     }
     u->fd = NM_INVALID_SOCKET;
@@ -131,7 +143,7 @@ nm_udp *nm_udp_open(const char *host, uint16_t port, char *err, size_t err_len)
     }
 
     if (u->fd == NM_INVALID_SOCKET) {
-        snprintf(err, err_len, "could not open a socket to the relay at %s:%u (error %d)",
+        say(err, err_len, "could not open a socket to the relay at %s:%u (error %d)",
                  host, (unsigned)port, nm_socket_errno);
         goto fail;
     }

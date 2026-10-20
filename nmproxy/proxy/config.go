@@ -3,15 +3,12 @@ package proxy
 import (
 	"bytes"
 	"fmt"
-	"io"
 	"os"
 	"runtime"
 	"time"
 
 	"gopkg.in/yaml.v3"
 )
-
-func newBytesReader(b []byte) io.Reader { return bytes.NewReader(b) }
 
 // Config is the daemon's entire configuration, loaded from a file.
 //
@@ -88,7 +85,7 @@ func LoadConfig(path string) (Config, []string, error) {
 		return cfg, nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 
-	dec := yaml.NewDecoder(newBytesReader(raw))
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true)
 	if err := dec.Decode(&cfg); err != nil {
 		return cfg, nil, fmt.Errorf("parsing %s: %w", path, err)
