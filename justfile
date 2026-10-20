@@ -49,8 +49,9 @@ builddir := "build"
 cfgdir := if os() == "windows" { "/" + config } else { "" }
 bindir := builddir + "/cstream" + cfgdir
 
-# Default target
-default: test
+# Show what is available
+default:
+    @just --list
 
 # Configure the CMake build tree
 configure:
@@ -144,10 +145,6 @@ clean:
       simulink/blockset/examples simulink/blockset/doc/html simulink/blockset/doc/helptoc.xml \
       simulink/blockset/doc/helpsearch-* simulink/blockset/script/Contents.m \
       simulink/blockset/codegen
-
-# Show what is available
-help:
-    @just --list
 
 # The user docs in docs/, published on the Nominal docs hub at /matlab/simulink/. Python is
 # here only for these, through uv. Warnings fail the build, as they do in CI.
