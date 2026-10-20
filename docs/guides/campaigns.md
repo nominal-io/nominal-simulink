@@ -29,7 +29,10 @@ For hundreds or thousands of executions, set **Create run** to **One per model**
 execution then goes into one run, and in a workbook **Split by tags** on `execution-id` plots
 each execution as its own series, as
 [Large campaigns](site:/quickstart/quickstart/fundamentals/organization/simulation/#large-campaigns)
-shows.
+shows. Keep **Tags (key and value pairs)** the same for every execution. The first execution
+creates the run, and the run shows only the points that carry its tags, so a tag that changes
+between executions, or an `execution-id` entered there by hand, leaves every later execution
+out of the run.
 
 ## Set each execution from a script
 

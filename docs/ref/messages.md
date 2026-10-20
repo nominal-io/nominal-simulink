@@ -18,7 +18,8 @@ dialog. The rest appear when the run starts.
 `<field> must be text in quotes, for example <example>.`
 : The field holds something other than text, such as a number. Put the value in single or
   double quotes. The block checks **Channel names (comma-separated)** when you apply the dialog,
-  and **Dataset RID**, **Proxy host**, **Profile** and **Profile file** when the run starts.
+  and **Dataset RID**, **Proxy host**, **Profile** and **Profile file** when the run starts, and
+  **Run title** and **Ref name** too when **Create run** is on.
 
 `Dataset RID is empty. Enter the RID of the dataset to write to, in quotes.`
 : [Finding a dataset's RID](site:/quickstart/quickstart/quick/quick-dataset-rid/) shows where

@@ -45,8 +45,9 @@
 %% Parameters
 % Text parameters take a MATLAB expression, so enter text in single or double quotes, or
 % the name of a variable that holds the text. No parameter can change while the model
-% runs. The dialog greys out *Profile* and *Profile file* in proxy mode, and *Proxy host*
-% and *Proxy port* in direct mode.
+% runs. The dialog greys out *Profile* and *Profile file* in proxy mode, *Proxy host*
+% and *Proxy port* in direct mode, and *Run title* and *Ref name* when *Create run* is
+% *None*.
 %
 % To set a parameter from code, use its programmatic name. A text value keeps its quotes
 % inside the string:

@@ -18,8 +18,8 @@ is then a double scalar: the number of rows dropped so far in the current run.
 
 Text parameters take a MATLAB expression, so enter text in single or double quotes, or the name
 of a variable that holds the text. No parameter can change while the model runs. The dialog greys out
-**Profile**, **Profile file** and the run fields in proxy mode, **Proxy host** and **Proxy port**
-in direct mode, and **Run title** and **Ref name** when **Create run** is **None**.
+**Profile** and **Profile file** in proxy mode, **Proxy host** and **Proxy port** in direct mode,
+and **Run title** and **Ref name** when **Create run** is **None**.
 
 **Channel names (comma-separated)**
 : Default `'engine.rpm, engine.egt, engine.psi'`. The channel names, in the order of the
