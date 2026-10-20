@@ -408,6 +408,32 @@ static void test_clock_resolves_finer_than_a_step(void)
     check(finest <= 10000, "the clock steps by 10 us or less");
 }
 
+/*
+ * The sender times its sends, its HELLO repeats and the close limit on nm_mono_nanos, so
+ * that a clock set backwards doesn't stall them until it catches up. A test can't step
+ * the computer's clock, but it can check this one keeps time in nanoseconds and never
+ * goes backwards.
+ */
+static void test_the_sender_clock_keeps_time_and_never_goes_back(void)
+{
+    int64_t start = nm_mono_nanos(), last = start, elapsed_ms;
+    int     backwards = 0, i;
+
+    for (i = 0; i < 100000; i++) {
+        int64_t now = nm_mono_nanos();
+        if (now < last) {
+            backwards = 1;
+        }
+        last = now;
+    }
+    check(!backwards, "the sender's clock never goes backwards");
+
+    start = nm_mono_nanos();
+    nm_sleep_ms(200);
+    elapsed_ms = (nm_mono_nanos() - start) / 1000000;
+    check(elapsed_ms >= 190 && elapsed_ms < 1000, "and counts a 200 ms sleep as about 200 ms");
+}
+
 /* DIRECT mode needs somewhere to POST, so a missing base URL is refused at open. */
 static void test_open_refuses_a_missing_base_url(void)
 {
@@ -451,6 +477,7 @@ int main(void)
     test_rows_wait_for_the_delay_or_half_the_buffer();
     test_a_short_delay_sends_a_trickle_promptly();
     test_a_slow_request_holds_no_buffer_space();
+    test_the_sender_clock_keeps_time_and_never_goes_back();
     test_clock_resolves_finer_than_a_step();
     test_open_refuses_a_missing_base_url();
 

@@ -40,7 +40,7 @@ typedef struct {
  * `dataset_rid` an existing dataset, `ca_bundle_path` may be NULL to use the
  * platform default. Returns NULL on failure.
  *
- * `deadline` points at a wall-clock instant in nanoseconds, 0 for none, which another
+ * `deadline` points at an instant on nm_mono_nanos's clock, 0 for none, which another
  * thread may set at any time. Once it has passed, a request in flight is abandoned and
  * no further attempts are made. It is how nm_close bounds the final flush.
  */

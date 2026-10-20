@@ -1,7 +1,5 @@
 #include "nm_http.h"
-#include "nm_thread.h"   /* nm_sleep_ms, for backoff */
-
-#include "nominal_stream.h"   /* nm_now_nanos */
+#include "nm_thread.h"   /* nm_sleep_ms, for backoff, and nm_mono_nanos */
 
 #include <curl/curl.h>
 
@@ -41,7 +39,7 @@ int nm_http_global_init(void)
 static int deadline_passed(const nm_http *h)
 {
     int64_t d = h->deadline != NULL ? *h->deadline : 0;
-    return d != 0 && nm_now_nanos() >= d;
+    return d != 0 && nm_mono_nanos() >= d;
 }
 
 /* libcurl calls this about once a second even while a transfer is stalled, which is

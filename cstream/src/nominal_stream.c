@@ -66,7 +66,7 @@ struct nm_stream {
     uint64_t  session_id;
     uint64_t  config_id;
     uint64_t  sequence;
-    int64_t   last_hello;    /* when the last HELLO went, by nm_now_nanos */
+    int64_t   last_hello;    /* when the last HELLO went, by nm_mono_nanos */
     char     *dataset_rid;   /* kept, because HELLO re-sends it */
     nm_frame_run run;        /* likewise; title and ref_name point into run_pool */
     char        *run_pool;
@@ -94,8 +94,8 @@ struct nm_stream {
     uint32_t  max_delay_ms;
     uint32_t  poll_ms;
 
-    /* 0 until nm_close, which sets it to the wall-clock instant the final flush must
-     * finish by, before stopping the sender -- so a drain the sender is part-way
+    /* 0 until nm_close, which sets it to the instant, by nm_mono_nanos, the final flush
+     * must finish by, before stopping the sender -- so a drain the sender is part-way
      * through is bounded too. Aligned 64-bit accesses are atomic on our targets. */
     volatile int64_t close_deadline;
     uint32_t         close_timeout_ms;
@@ -272,7 +272,7 @@ static void send_hello(nm_stream *s)
     if (n > 0) {
         nm_udp_send(s->udp, buf, n);
     }
-    s->last_hello = nm_now_nanos();
+    s->last_hello = nm_mono_nanos();
 }
 
 /*
@@ -330,7 +330,7 @@ static void drain_proxy(nm_stream *s)
 static int close_deadline_passed(const nm_stream *s)
 {
     int64_t d = s->close_deadline;
-    return d != 0 && nm_now_nanos() >= d;
+    return d != 0 && nm_mono_nanos() >= d;
 }
 
 /* The final flush is out of time: count what is still buffered as lost rather than
@@ -465,7 +465,7 @@ static NM_THREAD_FN(sender_main, arg)
         size_t  waiting;
 
         nm_sleep_ms(s->poll_ms);
-        now = nm_now_nanos();
+        now = nm_mono_nanos();
 
         if (s->mode == NM_MODE_PROXY &&
             now - s->last_hello >= (int64_t)NM_HELLO_INTERVAL_MS * 1000000) {
@@ -738,7 +738,7 @@ void nm_close_stats(nm_stream *s, nm_stats_t *out)
 
     /* Set before the sender is told to stop, so a drain it is part-way through is held
      * to the same limit as the one below. */
-    s->close_deadline = nm_now_nanos() + (int64_t)s->close_timeout_ms * 1000000;
+    s->close_deadline = nm_mono_nanos() + (int64_t)s->close_timeout_ms * 1000000;
 
     /* Only a stream nm_open finished has announced itself, so only it sends END. */
     opened = s->thread_started;
