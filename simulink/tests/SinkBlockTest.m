@@ -267,9 +267,9 @@ classdef SinkBlockTest < BlocksetTestCase
             tc.verifyEqual([ends.endTime], repmat(max(vertcat(data.timestamps)), 1, numel(ends)));
         end
 
-        function aProxyRunPerModelLeavesOutTheExecutionId(tc)
-            % Every execution's points are in a run per model, so it shows the Tags field's
-            % tags and not the execution ID, which comes last.
+        function aProxyRunPerModelShowsTheWholeDataset(tc)
+            % A run per model holds every execution, so it matches no tags. Matching the
+            % first execution's would leave out every later one whose tags differ.
             [model, blk] = SinkBlockTest.proxyModel('nm_sink_proxymodel');
             set_param(blk, 'createRun', 'One per model', 'tags', '["model" "A"]');
             frames = SinkBlockTest.capture(tc, blk, @() sim(model));
@@ -277,7 +277,7 @@ classdef SinkBlockTest < BlocksetTestCase
             hello = frames(strcmp({frames.type}, 'hello'));
             tc.assertNotEmpty(hello, 'the block sent no HELLO.');
             tc.verifyEqual({hello(1).run.mode, hello(1).run.tagCount, hello(1).run.title}, ...
-                {'shared', 1, 'nm_sink_proxymodel'});
+                {'shared', 0, 'nm_sink_proxymodel'});
         end
 
         function runsInAcceleratorMode(tc)

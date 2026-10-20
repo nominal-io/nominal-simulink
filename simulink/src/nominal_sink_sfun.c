@@ -90,7 +90,7 @@ enum {
 enum {
     RUN_NONE          = 1,
     RUN_PER_EXECUTION = 2,    /* a run for each execution, filtered to all its tags */
-    RUN_PER_MODEL     = 3     /* one run every execution extends, filtered to Tags */
+    RUN_PER_MODEL     = 3     /* one run every execution extends, showing the whole dataset */
 };
 
 /* The separators nominal_sink_tags joins the Tags field with. */
@@ -448,16 +448,12 @@ static char *make_run_title(SimStruct *S, const sink_state *st, int run_mode,
 
 /*
  * How many of the tags the run shows the points with. A run per execution shows those
- * with all of this execution's tags, its execution ID included. A run per model shows
- * those with the Tags field's tags, so every execution's points are in it. The execution
- * ID is the last tag, so that is all but the last.
+ * with all of this execution's tags, its execution ID included. A run per model holds
+ * every execution, so it shows every point in the dataset, with no tags to match.
  */
-static size_t run_tag_count(const sink_state *st, size_t tag_count, int run_mode)
+static size_t run_tag_count(size_t tag_count, int run_mode)
 {
-    if (run_mode == RUN_PER_MODEL && st->execution_id != NULL && tag_count > 0) {
-        return tag_count - 1;
-    }
-    return tag_count;
+    return run_mode == RUN_PER_MODEL ? 0 : tag_count;
 }
 
 /* When the run starts: 0 when rows are stamped with simulation time alone, so the run
@@ -484,7 +480,7 @@ static void start_run(SimStruct *S, sink_state *st, const nm_config *cfg, int ru
     st->run.ref_name      = st->ref_name;
     st->run.title         = st->run_title;
     st->run.tags          = cfg->tags;
-    st->run.tag_count     = run_tag_count(st, cfg->tag_count, run_mode);
+    st->run.tag_count     = run_tag_count(cfg->tag_count, run_mode);
     st->run.shared        = run_mode == RUN_PER_MODEL;
     st->run.start_nanos   = run_start(st);
 
@@ -780,7 +776,7 @@ static void mdlStart(SimStruct *S)
         if (st->run_title != NULL) {
             cfg.run_title       = st->run_title;
             cfg.run_ref_name    = ref_name;
-            cfg.run_tag_count   = run_tag_count(st, cfg.tag_count, run_mode);
+            cfg.run_tag_count   = run_tag_count(cfg.tag_count, run_mode);
             cfg.run_start_nanos = run_start(st);
             cfg.run_shared      = run_mode == RUN_PER_MODEL;
         }

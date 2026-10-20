@@ -132,10 +132,10 @@
 % watched live, and sets its end once the last row is sent. The run shows the dataset's
 % points with this execution's tags, the execution ID included. *One per model* shares one
 % run between every execution with the same title: the first creates it, later ones
-% extend its end, and it shows the points with the tags in *Tags*. Finding the run means
-% searching every run whose title contains this one, so the more runs have similar
-% titles, the longer an execution takes to start. When a run can't be
-% created or ended, the block warns and the rows still go to the dataset. In proxy mode
+% extend its end, and it shows every point in the dataset, whatever its tags. Finding
+% the run means searching every run whose title contains this one, so the more runs have
+% similar titles, the longer an execution takes to start. When a run can't be created or
+% ended, the block warns and the rows still go to the dataset. In proxy mode
 % the relay creates and ends the run with its own profile, and warns in its log instead.
 %
 % Programmatic name: |createRun|. Values: |'None'| (default), |'One per execution'|,
