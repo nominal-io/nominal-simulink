@@ -128,20 +128,20 @@ recent failure. What to do depends on the cause.
 : Rows arrived faster than they were sent. See
   [Timing and dropped rows](../guides/timing.md#when-sending-falls-behind).
 
-`<n> requests failed, the last with HTTP status <status>`
+`<n> requests failed, the last with HTTP status <status>`, or `1 request failed, with HTTP status <status>`
 : Nominal refused the rows, and the `Last error` has its error message. Check that the
   profile's `base_url` is the API URL of the instance the dataset belongs to, that
   **Dataset RID** is right, and that the profile's `token` is a current API key for that
   instance.
 
-`<n> requests failed, the last with no response`
+`<n> requests failed, the last with no response`, or `1 request failed, with no response`
 : The computer couldn't reach the profile's `base_url`, and the `Last error` says why. Check the
   URL and the network. When the `Last error` ends with
   `. Set NOMINAL_CA_BUNDLE to a PEM file of the CA certificates to trust (libcurl/<version> …)`,
   the computer doesn't trust the certificate Nominal presented. See
   [Environment variable](block.md#environment-variable).
 
-`<n> packets could not be sent to the relay`
+`<n> packets could not be sent to the relay`, or `1 packet could not be sent to the relay`
 : In proxy mode, the computer couldn't send to **Proxy host** and **Proxy port**, and the
   `Last error` reads
   `could not send a packet to the relay. Check that it is running and reachable`. Check that

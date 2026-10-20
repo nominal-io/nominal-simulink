@@ -24,14 +24,16 @@
 %   they could be sent. Raise *Buffer capacity (rows)*, raise the sample time to write
 %   less often, or switch to <streaming_via_proxy.html proxy mode>. For a simulation that
 %   runs faster than real time, a buffer that holds every row of the run also works.
-% * |requests failed, the last with HTTP status| followed by a number: Nominal refused
-%   the rows, and the |Last error| gives its reason. Check that the profile's |base_url|
+% * |requests failed, the last with HTTP status| or |1 request failed, with HTTP
+%   status| followed by a number: Nominal refused the rows, and the |Last error| gives
+%   its reason. Check that the profile's |base_url|
 %   is the API URL of the instance the dataset belongs to, that *Dataset RID* is right,
 %   and that the profile's |token| is a current API key.
-% * |requests failed, the last with no response|: the computer couldn't reach the
-%   profile's |base_url|. Check the URL and the network.
-% * |packets could not be sent to the relay|: check that |nmproxy| is running at *Proxy
-%   host* and *Proxy port*.
+% * |requests failed, the last with no response| or |1 request failed, with no
+%   response|: the computer couldn't reach the profile's |base_url|. Check the URL and
+%   the network.
+% * |packets could not be sent to the relay| or |1 packet could not be sent to the
+%   relay|: check that |nmproxy| is running at *Proxy host* and *Proxy port*.
 
 %% Nothing Arrives Through the Relay
 % Check the relay's log. A |stats| line with |rows=0| means packets aren't reaching it:

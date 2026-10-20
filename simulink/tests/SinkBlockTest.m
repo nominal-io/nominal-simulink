@@ -37,12 +37,19 @@ classdef SinkBlockTest < BlocksetTestCase
             tc.verifyEmpty(c.Outport);
         end
 
-        function stepsWithAnUnreachableEndpoint(~)
+        function stepsWithAnUnreachableEndpoint(tc)
             % The test profile's URL is a closed port, so the sender thread fails its POSTs.
             % That is the point: a model must keep stepping when the network is
             % unreachable, since telemetry loss is never a reason to stall a simulation.
+            %
+            % The warning counts the failed requests. The run is short enough to send in
+            % one request, which once read "1 requests failed", but a slow computer can
+            % take two, so either wording passes.
             model = SinkBlockTest.directModel('nm_sink_steps');
-            sim(model);
+            out = simOutput(model);
+            tc.verifyMatches(out, ['1 request failed, with no response|' ...
+                '\d+ requests failed, the last with no response']);
+            tc.verifyEmpty(regexp(out, '\<1 requests\>', 'once'));
         end
 
         function showDroppedAddsAnOutputPort(tc)

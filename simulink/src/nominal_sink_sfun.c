@@ -1032,11 +1032,23 @@ static void mdlTerminate(SimStruct *S)
             snprintf(why, sizeof why,
                      "the buffer filled faster than the network drained it");
         } else if (st->mode == MODE_PROXY) {
-            snprintf(why, sizeof why, "%llu packets could not be sent to the relay",
-                     (unsigned long long)stats.requests_failed);
+            if (stats.requests_failed == 1) {
+                snprintf(why, sizeof why, "1 packet could not be sent to the relay");
+            } else {
+                snprintf(why, sizeof why, "%llu packets could not be sent to the relay",
+                         (unsigned long long)stats.requests_failed);
+            }
         } else if (stats.last_http_status > 0) {
-            snprintf(why, sizeof why, "%llu requests failed, the last with HTTP status %ld",
-                     (unsigned long long)stats.requests_failed, stats.last_http_status);
+            if (stats.requests_failed == 1) {
+                snprintf(why, sizeof why, "1 request failed, with HTTP status %ld",
+                         stats.last_http_status);
+            } else {
+                snprintf(why, sizeof why,
+                         "%llu requests failed, the last with HTTP status %ld",
+                         (unsigned long long)stats.requests_failed, stats.last_http_status);
+            }
+        } else if (stats.requests_failed == 1) {
+            snprintf(why, sizeof why, "1 request failed, with no response");
         } else {
             snprintf(why, sizeof why, "%llu requests failed, the last with no response",
                      (unsigned long long)stats.requests_failed);
