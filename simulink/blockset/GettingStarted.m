@@ -1,7 +1,12 @@
 %% Getting Started with the Nominal Blockset
 % Stream signals from a running Simulink model into a Nominal dataset.
 %
-% You need an existing dataset in Nominal and its RID, and a profile in Nominal's config
+% To see the block in a model before you set anything up, open the example model and run
+% it. It streams three signals through a relay, and runs without an API key or a relay:
+%
+%   open_system(fullfile(nominal_root,'examples','nominal_stream_example.slx'))
+%
+% To stream from your own model, you need an existing dataset in Nominal and its RID, and a profile in Nominal's config
 % file holding your API key and your instance's API URL. A computer already set up for
 % another Nominal client, such as the Python client or nominal-matlab, has one. Otherwise
 % follow API keys setup in the Nominal docs.

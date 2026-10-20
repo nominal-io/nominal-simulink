@@ -184,7 +184,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: mltbx
-          path: build/NominalBlockset-*.mltbx
+          path: dist/NominalBlockset-*.mltbx
           if-no-files-found: error
 
   install-test:
@@ -206,7 +206,7 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: mltbx
-          path: build
+          path: dist
 
       - uses: matlab-actions/setup-matlab@v2
         with:
@@ -277,12 +277,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: mltbx
-          path: build
+          path: dist
 
       - uses: actions/download-artifact@v4
         with:
           name: relay
-          path: build
+          path: dist
 
       # The tag names the release and VERSION versions the toolbox, so a mismatch would
       # publish v0.2.0 containing 0.1.0.
@@ -299,6 +299,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" \
-            build/NominalBlockset-*.mltbx build/nmproxy-* build/SHA256SUMS \
+            dist/NominalBlockset-*.mltbx dist/nmproxy-* dist/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --title "Nominal Blockset $GITHUB_REF_NAME" \
             --notes "Install the blockset by opening the .mltbx in MATLAB R2021b or later, or R2023b or later on a Mac. The nmproxy archives hold the relay for each platform, with an example configuration."

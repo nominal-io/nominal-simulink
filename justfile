@@ -114,7 +114,7 @@ example: library
 docs:
     for m in {{releases}}; do "$m" -batch "addpath('simulink/tools'); make_docs" || exit 1; done
 
-# Build the toolbox installer, build/NominalBlockset-<version>.mltbx
+# Build the toolbox installer, dist/NominalBlockset-<version>.mltbx
 package: example docs
     "{{matlab}}" -batch "addpath('simulink/tools'); package_blockset"
 
@@ -139,9 +139,9 @@ matlab-test:
 matlab-proxy port="15400":
     "{{matlab}}" -batch "addpath('matlab'); nmproxy_reference('Port', {{port}})"
 
-# Delete the build tree and everything generated into the blockset
+# Delete the build tree, the packaged toolbox, and everything generated into the blockset
 clean:
-    rm -rf {{builddir}} simulink/blockset/mex/*.mex* simulink/blockset/library/*.slx \
+    rm -rf {{builddir}} dist simulink/blockset/mex/*.mex* simulink/blockset/library/*.slx \
       simulink/blockset/examples simulink/blockset/doc/html simulink/blockset/doc/helptoc.xml \
       simulink/blockset/doc/helpsearch-* simulink/blockset/script/Contents.m \
       simulink/blockset/codegen

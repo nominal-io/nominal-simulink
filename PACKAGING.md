@@ -50,14 +50,14 @@ Package on any of the three machines. It needs R2023a or later on the PATH.
 1. Copy the other two binaries into `simulink/blockset/mex/` on that machine. Don't run
    `just clean` after this, because it deletes every binary in that folder.
 2. Run `just package`. It rebuilds this machine's binary, the library, the example model and the
-   help pages, then writes `build/NominalBlockset-<version>.mltbx`.
+   help pages, then writes `dist/NominalBlockset-<version>.mltbx`.
 3. Check the last line of the output. It lists the platforms the toolbox claims, which follow the
    binaries it found, and the oldest release it installs in. With all three binaries and the
    oldest release installed, it reads `(Win64, Linux, macOS, R2021b and later)`.
 4. Run `just install-test`. It installs the toolbox in a clean MATLAB session, runs the block
    from it and uninstalls it again, in each release.
 
-To test the toolbox on the other two platforms, copy the `.mltbx` into `build/` on each of them
+To test the toolbox on the other two platforms, copy the `.mltbx` into `dist/` on each of them
 and run `just install-test` there.
 
 The toolbox claims macOS without naming a processor, so someone on an Intel Mac can install it,

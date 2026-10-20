@@ -1,5 +1,5 @@
 function file = package_blockset()
-%PACKAGE_BLOCKSET  Build the blockset installer, build/NominalBlockset-<version>.mltbx.
+%PACKAGE_BLOCKSET  Build the blockset installer, dist/NominalBlockset-<version>.mltbx.
 %
 %   Packages simulink/blockset as it stands. Everything in that folder ships, apart from
 %   the editor and cache files filtered out below, so build it first. `just package`
@@ -21,7 +21,7 @@ function file = package_blockset()
     simulinkDir = fileparts(fileparts(mfilename('fullpath')));
     root    = fullfile(simulinkDir, 'blockset');
     version = strtrim(fileread(fullfile(simulinkDir, 'VERSION')));
-    outDir  = fullfile(fileparts(simulinkDir), 'build');
+    outDir  = fullfile(fileparts(simulinkDir), 'dist');
 
     % A half-built package installs cleanly and then fails in front of a user, so refuse
     % to make one. The recipe that makes each file is in the message.

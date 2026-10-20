@@ -36,7 +36,7 @@ classdef InstalledToolboxTest < matlab.unittest.TestCase
 
             simulinkDir = fileparts(fileparts(mfilename('fullpath')));
             tc.Version  = strtrim(fileread(fullfile(simulinkDir, 'VERSION')));
-            file = fullfile(fileparts(simulinkDir), 'build', ...
+            file = fullfile(fileparts(simulinkDir), 'dist', ...
                             sprintf('NominalBlockset-%s.mltbx', tc.Version));
             tc.fatalAssertTrue(isfile(file), sprintf('%s is missing. Run `just package`.', file));
 

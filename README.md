@@ -71,7 +71,7 @@ is the first release that runs natively on Apple silicon.
 just build         # the C library, the S-function and the demo
 just test          # the C library's tests
 just sim-test      # the block's tests, in both MATLAB releases
-just package       # everything that ships, then build/NominalBlockset-<version>.mltbx
+just package       # everything that ships, then dist/NominalBlockset-<version>.mltbx
 just install-test  # installs that toolbox in a clean session and runs the block from it
 just build-docs    # the user docs, into docs/_build/dirhtml
 ```
