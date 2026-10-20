@@ -52,6 +52,11 @@ endif()
 # Plain signature, not PRIVATE: matlab_add_mex already links the MEX libraries with the
 # non-keyword form, and CMake refuses to mix the two on one target.
 target_link_libraries(nominal_sink_sfun nominalstream)
+
+# The MEX is a shared library, so the static library linked into it has to be compiled
+# as position-independent code. On Linux, GCC doesn't do that unless asked.
+set_property(TARGET nominalstream PROPERTY POSITION_INDEPENDENT_CODE ON)
+
 if(NOT WIN32)
   target_link_libraries(nominal_sink_sfun m)   # llround
 endif()
