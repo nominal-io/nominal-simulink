@@ -47,8 +47,10 @@ The file is YAML. A key the relay doesn't know stops it at startup. Each release
 
 `idle_timeout`
 : Default `5m`. How long a block can go quiet, as it does once its run ends, before the relay
-  closes that block's stream. A Go duration such as `30s` or `10m`, greater than zero. Leave the
-  key out to use the default.
+  forgets its channel list. The relay's stream to a dataset stays open while it remembers any
+  channel list for that dataset, so executions that follow each other within this time share
+  one connection. A Go duration such as `30s` or `10m`, greater than zero. Leave the key out to
+  use the default.
 
 `stats_interval`
 : Default `30s`. How often to log a [stats line](#stats). `0` turns it off.
@@ -158,8 +160,9 @@ datasets that aren't in `allowed_datasets`.
 | `writing to Nominal` | INFO | The relay will write with the API key in `profile`, to its `base_url`. |
 | `dry run: frames will be decoded and reported, nothing written` | INFO | `dry_run` is `true`. |
 | `configuration registered` | INFO | A block started sending a new channel list, with its dataset and number of channels. |
-| `stream opened` | INFO | The relay opened a stream to the dataset. |
-| `stream opened (dry run: nothing will be written)` | INFO | As above, in a dry run. |
+| `stream opened` | INFO | The relay opened a stream to the dataset. Every channel list for the dataset shares it. |
+| `stream opened (dry run: nothing will be written)` | INFO | In a dry run, a channel list started, with its dataset, number of channels and tags. |
+| `stream reopened` | INFO | The relay replaced its stream to the dataset with a fresh one, because the old one had been used by 16384 channel and tag pairs, which is how many a long campaign of executions adds up to. The old stream sends its last rows in the background. |
 | `session started` | INFO | An execution of a model started sending. |
 | `session ended` | INFO | An execution stopped and sent END, with its totals. Logged once, though the block sends END three times. |
 | `run created` | INFO | The relay created the run an execution asked for, with its RID and title. |
@@ -180,7 +183,8 @@ datasets that aren't in `allowed_datasets`.
 | `stream closed with errors` | WARN | A stream closed after some of its writes failed, with the number of failures and the last error. |
 | `stream closed` | INFO | A stream closed with no write failures reported. |
 | `session idle, forgetting it` | INFO | An execution sent nothing for `idle_timeout`. When it sent no END, the relay ends its run here, at the newest row it received. |
-| `configuration idle, closing its stream` | INFO | A channel list went unheard for `idle_timeout`. |
+| `configuration idle, forgetting it` | INFO | A channel list went unheard for `idle_timeout`. The relay closes its stream to the dataset once it has forgotten every channel list for it. |
 | `closing an idle stream failed` | ERROR | Sending the last rows of an idle stream failed. |
+| `closing a replaced stream failed` | ERROR | After `stream reopened`, sending the old stream's last rows failed. |
 | `closing a stream failed` | ERROR | At shutdown, sending a stream's last rows failed. |
 | `shutting down` | INFO | The relay is exiting, with totals. |

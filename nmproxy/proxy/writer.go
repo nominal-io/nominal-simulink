@@ -16,10 +16,12 @@ import (
 // without a token or a network, and so the real writer can be swapped without touching
 // anything above it.
 type Writer interface {
-	// Open starts a stream. Every channel carries tags, which may be empty. onError is
-	// called for every write that fails after Push has returned: a writer that batches
-	// and sends in the background only learns of a failure later, and the caller has to
-	// count those failures all the same. onError may be called from any goroutine.
+	// Open starts a stream for a channel list. Every channel carries tags, which may be
+	// empty. onError is called for every write that fails after Push has returned: a
+	// writer that batches and sends in the background only learns of a failure later,
+	// and the caller has to count those failures all the same. onError may be called
+	// from any goroutine. A writer may share one connection between the channel lists
+	// of a dataset, in which case a failure is the dataset's rather than one list's.
 	Open(datasetRID string, channels []string, tags map[string]string,
 		onError func(error)) (Stream, error)
 }
@@ -30,6 +32,8 @@ type Stream interface {
 	// Push writes one row. Implementations must not block indefinitely: the caller is
 	// the UDP receive loop, and stalling it drops datagrams the kernel cannot buffer.
 	Push(timestampNanos int64, values []float64) error
+	// Close sends whatever the stream still holds for this channel list, as far as the
+	// writer can tell them apart, and releases it.
 	Close() error
 }
 

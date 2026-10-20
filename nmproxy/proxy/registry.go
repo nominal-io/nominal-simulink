@@ -89,7 +89,7 @@ type Registry struct {
 	runsActive sync.WaitGroup
 
 	// How long a configuration or session may go unheard before it is evicted. Without
-	// this a long-lived daemon accumulates a stream per model run forever.
+	// this a long-lived daemon would remember every model run forever.
 	idleTimeout time.Duration
 
 	mu       sync.Mutex
@@ -504,7 +504,9 @@ func (r *Registry) Stats() Stats {
 }
 
 // Sweep evicts configurations and sessions that have gone quiet, closing their streams.
-// Closing is what flushes buffered rows, so an evicted stream's data still lands.
+// The writer closes its connection to a dataset once the last configuration on it is
+// closed, and closing is what flushes buffered rows, so an evicted stream's data still
+// lands.
 func (r *Registry) Sweep(now time.Time) {
 	r.mu.Lock()
 
@@ -523,7 +525,7 @@ func (r *Registry) Sweep(now time.Time) {
 	}
 	for id, c := range r.configs {
 		if now.Sub(c.lastSeen) > r.idleTimeout {
-			r.log.Info("configuration idle, closing its stream",
+			r.log.Info("configuration idle, forgetting it",
 				"config", id, "dataset", c.rid)
 			closing = append(closing, c.stream)
 			delete(r.configs, id)

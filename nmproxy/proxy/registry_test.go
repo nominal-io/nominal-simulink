@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
@@ -77,6 +78,36 @@ func withRID(t *testing.T, hello []byte, rid string) []byte {
 	// The RID follows the header and its own 2-byte length.
 	copy(out[frame.HeaderBytes+2:], rid)
 	binary.LittleEndian.PutUint64(out[16:24], frame.ConfigID(rid, h.Channels, h.Tags))
+	return out
+}
+
+// withExecutionID returns a copy of a HELLO frame whose execution-id tag has another
+// one-character value, with its config_id recomputed: another channel list for the same
+// dataset, as the next execution of a model sends.
+func withExecutionID(t *testing.T, hello []byte, id string) []byte {
+	t.Helper()
+	if len(id) != 1 {
+		t.Fatalf("withExecutionID needs a one-character ID, got %q", id)
+	}
+	h, err := frame.DecodeHello(hello)
+	if err != nil {
+		t.Fatalf("decoding the HELLO fixture: %v", err)
+	}
+	const key = "execution-id"
+	at := bytes.Index(hello, []byte(key))
+	if at < 0 {
+		t.Fatal("the HELLO fixture has no execution-id tag")
+	}
+	out := make([]byte, len(hello))
+	copy(out, hello)
+	// The value follows the key and its own 2-byte length.
+	out[at+len(key)+2] = id[0]
+	for i := range h.Tags {
+		if h.Tags[i].Key == key {
+			h.Tags[i].Value = id
+		}
+	}
+	binary.LittleEndian.PutUint64(out[16:24], frame.ConfigID(h.DatasetRID, h.Channels, h.Tags))
 	return out
 }
 

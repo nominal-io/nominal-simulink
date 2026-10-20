@@ -36,9 +36,10 @@ type Config struct {
 	// Nominal is the profile LoadConfig read, empty in a dry run.
 	Nominal Profile `yaml:"-"`
 
-	// IdleTimeout is how long a configuration may go unheard before its stream is
-	// closed and flushed. Hosts re-announce every second, even while a model is paused,
-	// so anything above a few seconds is safe.
+	// IdleTimeout is how long a configuration may go unheard before it is forgotten. The
+	// connection to a dataset closes, and flushes, once every configuration on it has
+	// been. Hosts re-announce every second, even while a model is paused, so anything
+	// above a few seconds is safe.
 	IdleTimeout time.Duration `yaml:"idle_timeout"`
 
 	// AllowedDatasets, when non-empty, restricts which dataset RIDs will be written to.

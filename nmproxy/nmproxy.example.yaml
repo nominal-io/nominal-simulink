@@ -39,7 +39,9 @@ allowed_datasets:
   # - "<dataset RID>"
 
 
-# How long nmproxy keeps a model's stream open after the model stops sending.
+# How long nmproxy remembers a model's channel list after the model stops sending. Its
+# connection to a dataset stays open while any channel list for the dataset is
+# remembered, so executions that follow each other within this time share one.
 #
 # Hosts repeat their channel list every second, so any value above a few seconds works.
 idle_timeout: 5m
