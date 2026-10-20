@@ -143,8 +143,9 @@
 %
 % *Run title* — the run's title
 %
-% Empty makes one from the model's name: one per execution adds the execution ID, as in
-% |Model A, execution 7|, and one per model uses the name alone.
+% Empty uses the model's name. One per execution adds the execution ID, as in
+% |Model A, execution 7|, so each execution's run has a title of its own:
+% |'Bench test'| gives |Bench test, execution 7|. One per model uses the title as it is.
 %
 % Programmatic name: |runTitle|. Default: |''|.
 %

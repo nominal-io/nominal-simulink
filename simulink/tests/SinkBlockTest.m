@@ -223,9 +223,20 @@ classdef SinkBlockTest < BlocksetTestCase
                 'could not create the run ''nm_sink_permodel''');
         end
 
-        function aRunTitleIsUsedAsGiven(tc)
+        function aRunTitleNamesEachExecutionsRun(tc)
+            % A run per execution needs a title of its own, since the relay finds an
+            % execution's run by its title after a restart, so Run title replaces only
+            % the model's name and the execution ID still follows.
             [model, blk] = SinkBlockTest.directModel('nm_sink_titled');
-            set_param(blk, 'createRun', 'One per execution', 'runTitle', '"Bench test"');
+            set_param(blk, 'createRun', 'One per execution', 'runTitle', '"Bench test"', ...
+                'executionId', '7');
+            tc.verifySubstring(simOutput(model), ...
+                'could not create the run ''Bench test, execution 7''');
+        end
+
+        function aRunPerModelUsesTheTitleAsGiven(tc)
+            [model, blk] = SinkBlockTest.directModel('nm_sink_titledmodel');
+            set_param(blk, 'createRun', 'One per model', 'runTitle', '"Bench test"');
             tc.verifySubstring(simOutput(model), 'could not create the run ''Bench test''');
         end
 

@@ -82,9 +82,10 @@ and **Run title** and **Ref name** when **Create run** is **None**.
   or end shows in [its log](nmproxy.md#log) instead.
 
 **Run title**
-: Default `''`, a title made from the model's name. One per execution adds the execution ID,
-  as in `Model A, execution 7`, or with no execution ID the UTC time the execution started.
-  One per model uses the model's name alone. Used only with **Create run**.
+: Default `''`, the model's name. One per execution adds the execution ID, as in
+  `Model A, execution 7`, or with no execution ID the UTC time the execution started, so each
+  execution's run has a title of its own: `'Bench test'` gives `Bench test, execution 7`. One
+  per model uses the title as it is. Used only with **Create run**.
 
 **Ref name**
 : Default `'default'`. The name the dataset goes under in the run. Workbooks find a channel by

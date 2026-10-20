@@ -401,44 +401,49 @@ static char *copy_text(const char *s)
 }
 
 /*
- * The run's title: Run title when set, otherwise one made from the model's name. A run
- * per execution adds the execution ID, or, with none, the UTC time the run started, as
- * in "Model A, execution 7". Caller frees.
+ * The run's title: Run title when set, otherwise the model's name. A run per execution
+ * adds the execution ID, or, with none, the UTC time the run started, as in
+ * "Model A, execution 7", so each execution's run has a title of its own. The relay
+ * relies on that: after a restart it finds an execution's run by its title and start.
+ * A run per model is shared, so its title is used as it is. Caller frees.
  */
 static char *make_run_title(SimStruct *S, const sink_state *st, int run_mode,
                             const char *given)
 {
-    const char *path = ssGetPath(S);
-    char        title[600];
-    int         model_len;
+    const char *base = given;
+    size_t      base_len;
+    char        suffix[340] = "";
+    char       *title;
 
-    if (given != NULL && given[0] != '\0') {
-        return copy_text(given);
-    }
-    /* The block's path starts with the model's name. */
-    model_len = (int)strcspn(path, "/");
-    if (model_len > 256) {
-        model_len = 256;
-    }
-
-    if (run_mode == RUN_PER_MODEL) {
-        snprintf(title, sizeof title, "%.*s", model_len, path);
-    } else if (st->execution_id != NULL) {
-        snprintf(title, sizeof title, "%.*s, execution %.300s", model_len, path,
-                 st->execution_id);
+    if (base == NULL || base[0] == '\0') {
+        /* The block's path starts with the model's name. */
+        base     = ssGetPath(S);
+        base_len = strcspn(base, "/");
     } else {
-        time_t     seconds = (time_t)(st->epoch_nanos / 1000000000LL);
-        struct tm *utc = gmtime(&seconds);
+        base_len = strlen(base);
+    }
 
-        if (utc != NULL) {
-            snprintf(title, sizeof title, "%.*s, %04d-%02d-%02d %02d:%02d:%02d UTC",
-                     model_len, path, utc->tm_year + 1900, utc->tm_mon + 1,
-                     utc->tm_mday, utc->tm_hour, utc->tm_min, utc->tm_sec);
+    if (run_mode != RUN_PER_MODEL) {
+        if (st->execution_id != NULL) {
+            snprintf(suffix, sizeof suffix, ", execution %.300s", st->execution_id);
         } else {
-            snprintf(title, sizeof title, "%.*s", model_len, path);
+            time_t     seconds = (time_t)(st->epoch_nanos / 1000000000LL);
+            struct tm *utc = gmtime(&seconds);
+
+            if (utc != NULL) {
+                snprintf(suffix, sizeof suffix, ", %04d-%02d-%02d %02d:%02d:%02d UTC",
+                         utc->tm_year + 1900, utc->tm_mon + 1, utc->tm_mday,
+                         utc->tm_hour, utc->tm_min, utc->tm_sec);
+            }
         }
     }
-    return copy_text(title);
+
+    title = malloc(base_len + strlen(suffix) + 1);
+    if (title != NULL) {
+        memcpy(title, base, base_len);
+        strcpy(title + base_len, suffix);
+    }
+    return title;
 }
 
 /*
