@@ -173,7 +173,8 @@ function make_library()
 
     % A run in Nominal for each execution, one shared by every execution of the model,
     % or none. Created when the run starts, so it can be watched live, and ended after
-    % the last row is sent. An empty Run title is made from the model's name.
+    % the last row is sent. The title is Run title, or the model's name when that is
+    % empty, and a run per execution adds the execution ID.
     m.addParameter('Type', 'popup', 'Name', 'createRun', ...
         'Prompt', 'Create run', ...
         'TypeOptions', {'None', 'One per execution', 'One per model'}, ...
