@@ -77,6 +77,7 @@ just build-docs    # the user docs, into docs/_build/dirhtml
 ```
 
 `just --list` shows the rest. None of the tests need an API key or network access.
+[PACKAGING.md](PACKAGING.md) covers building on each platform and packaging the toolbox by hand.
 
 
 Everything generated goes into `simulink/blockset/`, which is exactly what the toolbox contains.
