@@ -268,6 +268,41 @@ static void test_shared_reuses_the_exact_title(void)
           "found through search-runs");
 }
 
+/*
+ * The search returns a page at a time, and runs with similar titles can fill many pages
+ * ahead of the one wanted: every "Model A, execution N" contains "Model A". A search that
+ * stopped at the first page created a second "Model A" after a hundred executions.
+ */
+static void test_shared_searches_every_page(void)
+{
+    static fake_server srv;
+    unsigned short     port;
+    nm_thread          t;
+    nm_run_config      cfg;
+    char               rid[128], err[256];
+    nm_status          st;
+
+    memset(&srv, 0, sizeof srv);
+    srv.count     = 2;
+    srv.status[0] = srv.status[1] = 200;
+    srv.reply[0]  = "{\"results\":[{\"rid\":\"ri.scout.test.run.9\","
+                    "\"title\":\"Model A, execution 9\"}],\"nextPageToken\":\"page-2\"}";
+    srv.reply[1]  = "{\"results\":[{\"rid\":\"ri.scout.test.run.8\",\"title\":\"Model A\"}],"
+                    "\"nextPageToken\":null}";
+    t   = start_server(&srv, &port);
+    cfg = run_config(port, "Model A", 1);
+
+    st = nm_run_begin(&cfg, rid, sizeof rid, err, sizeof err);
+    stop_server(&srv, t);
+
+    check(st == NM_OK && strcmp(rid, "ri.scout.test.run.8") == 0,
+          "a shared run on a later page is found");
+    check(strstr(srv.seen[0], "\"nextPageToken\"") == NULL,
+          "the first search carries no page token");
+    check(strstr(srv.seen[1], "\"nextPageToken\":\"page-2\"") != NULL,
+          "and the second carries the first's next-page token");
+}
+
 static void test_shared_creates_when_none_exists(void)
 {
     static fake_server srv;
@@ -336,6 +371,7 @@ int main(void)
     test_begin_creates_a_run();
     test_end_sets_the_end_time();
     test_shared_reuses_the_exact_title();
+    test_shared_searches_every_page();
     test_shared_creates_when_none_exists();
     test_a_refusal_is_reported();
 

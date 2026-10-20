@@ -96,12 +96,24 @@ func (n *NominalRuns) Begin(ctx context.Context, spec RunSpec) (string, error) {
 		rid, ok := n.shared[spec.Title]
 		if !ok {
 			var err error
-			if rid, err = n.find(ctx, spec.Title); err != nil {
+			if rid, err = n.find(ctx, spec.Title, nil); err != nil {
 				return "", err
 			}
 		}
 		if rid != "" {
 			n.shared[spec.Title] = rid
+			n.log.Info("run found", "run", rid, "title", spec.Title, "session", spec.Session)
+			return rid, nil
+		}
+	} else {
+		// A relay that restarts mid-execution sees the HELLO again with no session, and
+		// would create a second run. The first one has this title and this start, which
+		// every HELLO of the execution repeats, so it is found and used instead.
+		rid, err := n.find(ctx, spec.Title, &spec.StartNanos)
+		if err != nil {
+			return "", err
+		}
+		if rid != "" {
 			n.log.Info("run found", "run", rid, "title", spec.Title, "session", spec.Session)
 			return rid, nil
 		}
@@ -163,9 +175,11 @@ func (n *NominalRuns) End(ctx context.Context, spec RunSpec, rid string, endNano
 	return nil
 }
 
-// find returns the newest run titled exactly title, or "" if there is none. The search's
-// exactMatch matches part of a title, ignoring case, so the results are filtered here.
-func (n *NominalRuns) find(ctx context.Context, title string) (string, error) {
+// find returns the newest run titled exactly title, and starting at *start if start isn't
+// nil, or "" if there is none. The search's exactMatch matches part of a title, ignoring
+// case, so every page of results is read and filtered here until the run is found. The
+// more runs have similar titles, the longer this takes.
+func (n *NominalRuns) find(ctx context.Context, title string, start *int64) (string, error) {
 	query := any(map[string]any{"type": "exactMatch", "exactMatch": title})
 	if n.workspace != "" {
 		query = map[string]any{"type": "and", "and": []any{
@@ -173,30 +187,43 @@ func (n *NominalRuns) find(ctx context.Context, title string) (string, error) {
 			map[string]any{"type": "workspace", "workspace": n.workspace},
 		}}
 	}
-	body := map[string]any{
-		"sort": map[string]any{
-			"isDescending": true,
-			"sortKey":      map[string]any{"type": "field", "field": "CREATED_AT"},
-		},
-		"pageSize": 100,
-		"query":    query,
-	}
 
-	var page struct {
-		Results []struct {
-			Rid   string `json:"rid"`
-			Title string `json:"title"`
-		} `json:"results"`
-	}
-	if err := n.do(ctx, http.MethodPost, "/scout/v1/search-runs", body, &page); err != nil {
-		return "", err
-	}
-	for _, r := range page.Results {
-		if r.Title == title {
-			return r.Rid, nil
+	token := ""
+	for {
+		body := map[string]any{
+			"sort": map[string]any{
+				"isDescending": true,
+				"sortKey":      map[string]any{"type": "field", "field": "CREATED_AT"},
+			},
+			"pageSize": 100,
+			"query":    query,
 		}
+		if token != "" {
+			body["nextPageToken"] = token
+		}
+
+		var page struct {
+			Results []struct {
+				Rid       string       `json:"rid"`
+				Title     string       `json:"title"`
+				StartTime utcTimestamp `json:"startTime"`
+			} `json:"results"`
+			NextPageToken string `json:"nextPageToken"`
+		}
+		if err := n.do(ctx, http.MethodPost, "/scout/v1/search-runs", body, &page); err != nil {
+			return "", err
+		}
+		for _, r := range page.Results {
+			if r.Title == title && (start == nil || r.StartTime == timestamp(*start)) {
+				return r.Rid, nil
+			}
+		}
+		// A repeated token would loop forever, so it ends the search like no token.
+		if page.NextPageToken == "" || page.NextPageToken == token {
+			return "", nil
+		}
+		token = page.NextPageToken
 	}
-	return "", nil
 }
 
 // do sends one request and decodes the answer into out, if out isn't nil.

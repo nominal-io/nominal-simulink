@@ -73,7 +73,9 @@ in direct mode, and **Run title** and **Ref name** when **Create run** is **None
   shows the dataset's points with this execution's tags, **Execution ID** included. **One per
   model** shares one run between every execution with the same title: the first execution creates
   it, later ones extend its end, and it shows the points with the tags in
-  **Tags (key and value pairs)**, so every execution's points are in it. In direct mode,
+  **Tags (key and value pairs)**, so every execution's points are in it. Finding the run means
+  searching every run whose title contains this one, so the more runs have similar titles, the
+  longer an execution takes to start. In direct mode,
   executions that start at the same moment, such as `parsim` workers, can each create the run.
   When a run can't be created or ended, the block warns and the rows still go to the dataset. In
   proxy mode, `nmproxy` creates and ends the run with its own profile, and a run it can't create

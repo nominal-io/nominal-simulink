@@ -163,7 +163,7 @@ datasets that aren't in `allowed_datasets`.
 | `session started` | INFO | An execution of a model started sending. |
 | `session ended` | INFO | An execution stopped and sent END, with its totals. Logged once, though the block sends END three times. |
 | `run created` | INFO | The relay created the run an execution asked for, with its RID and title. |
-| `run found` | INFO | An execution asked for a run shared with other executions, and the relay found it. |
+| `run found` | INFO | The relay found the run an execution asked for instead of creating it: a run shared with other executions, or an execution's own run made before the relay restarted. |
 | `run ended` | INFO | The relay set the end of an execution's run. |
 | `run (dry run: not created)` | INFO | In a dry run, the run an execution asked for. |
 | `run end (dry run: not set)` | INFO | In a dry run, the end the relay would set. |

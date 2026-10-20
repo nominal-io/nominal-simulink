@@ -288,13 +288,17 @@ var testSpec = RunSpec{
 }
 
 func TestCreatingARun(t *testing.T) {
-	n, fake := newNominalRuns(t, "", `200 {"rid":"ri.scout.test.run.1","title":"x"}`)
+	n, fake := newNominalRuns(t, "", `200 {"results":[]}`,
+		`200 {"rid":"ri.scout.test.run.1","title":"x"}`)
 
 	rid, err := n.Begin(context.Background(), testSpec)
 	if err != nil || rid != "ri.scout.test.run.1" {
 		t.Fatalf("Begin = %q, %v", rid, err)
 	}
-	got := fake.requests[0]
+	if len(fake.requests) != 2 || fake.requests[0].path != "/scout/v1/search-runs" {
+		t.Fatalf("requests = %+v, want a search and then a create", fake.requests)
+	}
+	got := fake.requests[1]
 	if got.method != "POST" || got.path != "/scout/v1/run" || got.auth != "Bearer test-key" {
 		t.Errorf("request = %s %s with %q", got.method, got.path, got.auth)
 	}
@@ -354,6 +358,66 @@ func TestASharedRunIsFoundByItsExactTitle(t *testing.T) {
 	}
 	if len(fake.requests) != 1 || fake.requests[0].path != "/scout/v1/search-runs" {
 		t.Errorf("requests = %+v, want one search", fake.requests)
+	}
+}
+
+// A relay restarted mid-execution gets the HELLO again and knows nothing of the run it
+// made before. The run with the HELLO's title and start is that run, so it is used rather
+// than a second one created, and the END then ends it. A run with the same title but
+// another start belongs to another execution with a fixed Run title, and is left alone.
+func TestARestartedRelayReusesTheExecutionsRun(t *testing.T) {
+	sameStart := timestamp(testSpec.StartNanos)
+	found := fmt.Sprintf(`200 {"results":[{"rid":"ri.scout.test.run.3","title":%q,`+
+		`"startTime":{"secondsSinceEpoch":%d,"offsetNanoseconds":%d}}]}`,
+		testSpec.Title, sameStart.SecondsSinceEpoch, sameStart.OffsetNanoseconds)
+	n, fake := newNominalRuns(t, "", found)
+
+	rid, err := n.Begin(context.Background(), testSpec)
+	if err != nil || rid != "ri.scout.test.run.3" {
+		t.Fatalf("Begin = %q, %v, want the run with this title and start", rid, err)
+	}
+	if len(fake.requests) != 1 {
+		t.Errorf("made %d requests, want one search and no create", len(fake.requests))
+	}
+
+	otherStart := fmt.Sprintf(`200 {"results":[{"rid":"ri.scout.test.run.3","title":%q,`+
+		`"startTime":{"secondsSinceEpoch":%d,"offsetNanoseconds":0}}]}`,
+		testSpec.Title, sameStart.SecondsSinceEpoch+60)
+	n, fake = newNominalRuns(t, "", otherStart, `200 {"rid":"ri.scout.test.run.4"}`)
+
+	rid, err = n.Begin(context.Background(), testSpec)
+	if err != nil || rid != "ri.scout.test.run.4" {
+		t.Fatalf("Begin = %q, %v, want a new run", rid, err)
+	}
+	if len(fake.requests) != 2 {
+		t.Errorf("made %d requests, want a search and a create", len(fake.requests))
+	}
+}
+
+// The search returns a page at a time, and runs with similar titles can fill many pages
+// ahead of the one wanted: every "Model A, execution N" contains "Model A". A search that
+// stopped at the first page created a second "Model A" after a hundred executions.
+func TestASharedRunIsFoundOnALaterPage(t *testing.T) {
+	n, fake := newNominalRuns(t, "",
+		`200 {"results":[{"rid":"ri.scout.test.run.9","title":"Model A, execution 9"}],`+
+			`"nextPageToken":"page-2"}`,
+		`200 {"results":[{"rid":"ri.scout.test.run.8","title":"Model A"}],`+
+			`"nextPageToken":null}`)
+	spec := testSpec
+	spec.Title, spec.Shared = "Model A", true
+
+	rid, err := n.Begin(context.Background(), spec)
+	if err != nil || rid != "ri.scout.test.run.8" {
+		t.Fatalf("Begin = %q, %v, want the run on the second page", rid, err)
+	}
+	if len(fake.requests) != 2 {
+		t.Fatalf("made %d requests, want two searches", len(fake.requests))
+	}
+	if _, has := fake.requests[0].body["nextPageToken"]; has {
+		t.Error("the first search carried a page token")
+	}
+	if got := fake.requests[1].body["nextPageToken"]; got != "page-2" {
+		t.Errorf("the second search carried token %v, want page-2", got)
 	}
 }
 

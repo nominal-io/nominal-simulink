@@ -8,8 +8,8 @@
  *   POST /scout/v1/search-runs      searchRuns     SearchRunsRequest -> SearchRunsResponse
  *
  * The search has no exact-title query. Its exactMatch is a case-insensitive substring
- * match on the title, so results are filtered to the exact title here, which is what
- * Nominal's Rust client does too.
+ * match on the title, so every page of results is read and filtered to the exact title
+ * here. The more runs have similar titles, the longer that takes.
  *
  * A fresh libcurl handle per request: a run makes two or three requests in its life, so
  * reusing a connection would buy nothing worth the state.
@@ -17,6 +17,7 @@
 
 #include "nominal_stream.h"
 #include "nm_encode.h"   /* nm_split_timestamp */
+#include "nm_http.h"     /* nm_http_global_init */
 
 #include <curl/curl.h>
 
@@ -321,7 +322,6 @@ static size_t collect(char *data, size_t size, size_t nmemb, void *userdata)
 static int request(const nm_run_config *cfg, const char *method, const char *path,
                    const buf *body, buf *response, char *err, size_t err_len)
 {
-    static int         curl_ready = 0;
     CURL              *curl;
     struct curl_slist *headers = NULL;
     buf                url = { 0 }, auth = { 0 };
@@ -329,12 +329,9 @@ static int request(const nm_run_config *cfg, const char *method, const char *pat
     long               status = 0;
     int                result = -1;
 
-    if (!curl_ready) {
-        if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
-            snprintf(err, err_len, "could not start the HTTPS client");
-            return -1;
-        }
-        curl_ready = 1;
+    if (nm_http_global_init() != 0) {
+        snprintf(err, err_len, "could not start the HTTPS client");
+        return -1;
     }
 
     buf_str(&url, cfg->base_url);
@@ -423,10 +420,11 @@ static int has_workspace(const nm_run_config *cfg)
     return !missing(cfg->workspace_rid);
 }
 
-/* With shared set: the newest run titled exactly cfg->title. 1 if found, 0 if not, -1
- * on failure. */
-static int find_run(const nm_run_config *cfg, char *rid, size_t rid_len,
-                    char *err, size_t err_len)
+/* One page of the search for cfg->title, continuing from `token` if it isn't empty.
+ * Writes the next page's token to `token`, or "" on the last page. Returns 1 if a run
+ * titled exactly cfg->title was on the page, 0 if not, -1 on failure. */
+static int search_page(const nm_run_config *cfg, char *token, size_t token_len,
+                       char *rid, size_t rid_len, char *err, size_t err_len)
 {
     buf         body = { 0 }, response = { 0 };
     const char *results, *p;
@@ -438,6 +436,11 @@ static int find_run(const nm_run_config *cfg, char *rid, size_t rid_len,
                    "\"sortKey\":{\"type\":\"field\",\"field\":\"CREATED_AT\"}},");
     snprintf(size, sizeof size, "\"pageSize\":%d,", SEARCH_PAGE_SIZE);
     buf_str(&body, size);
+    if (token[0] != '\0') {
+        buf_str(&body, "\"nextPageToken\":");
+        buf_json(&body, token);
+        buf_str(&body, ",");
+    }
     buf_str(&body, "\"query\":");
     if (has_workspace(cfg)) {
         buf_str(&body, "{\"type\":\"and\",\"and\":[");
@@ -481,9 +484,35 @@ static int find_run(const nm_run_config *cfg, char *rid, size_t rid_len,
         }
     }
 
+    /* The next page's token: a string, or null or absent on the last page. A token too
+     * long to keep ends the search as the last page would. */
+    token[0] = '\0';
+    p = object_get(response.data, "nextPageToken");
+    if (p != NULL && *skip_ws(p) == '"' && read_string(p, token, token_len) != 0) {
+        token[0] = '\0';
+    }
+
 done:
     free(body.data);
     free(response.data);
+    return found;
+}
+
+/* With shared set: the newest run titled exactly cfg->title, searching every page. 1 if
+ * found, 0 if not, -1 on failure. */
+static int find_run(const nm_run_config *cfg, char *rid, size_t rid_len,
+                    char *err, size_t err_len)
+{
+    char token[4096] = "";
+    char last[4096];
+    int  found;
+
+    do {
+        memcpy(last, token, sizeof last);
+        found = search_page(cfg, token, sizeof token, rid, rid_len, err, err_len);
+        /* A repeated token would loop forever, so it ends the search like no token. */
+    } while (found == 0 && token[0] != '\0' && strcmp(token, last) != 0);
+
     return found;
 }
 
