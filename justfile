@@ -65,8 +65,10 @@ build: configure
 test: build
     cd {{builddir}} && ctest -C {{config}} --output-on-failure
 
-# Build the relay for this machine into build/. Release builds for each platform come
-# from CI, which also strips symbols and disables cgo.
+# Release builds for each platform come from CI, or from relay-all, which also strip
+# symbols and disable cgo.
+#
+# Build the relay for this machine into build/
 relay:
     cd nmproxy && go build -trimpath \
       -ldflags "-X main.version=$(tr -d '[:space:]' < ../simulink/VERSION)-dev" \
@@ -75,6 +77,38 @@ relay:
 # Vet and test the relay
 relay-test:
     cd nmproxy && go vet ./... && go test ./...
+
+# An archive per platform CI releases the relay for, each holding nmproxy and
+# nmproxy.example.yaml, and SHA256SUMS. Go cross-compiles with cgo off, so any machine
+# builds all four. The version ends in -dev and the commit, as CI's does for a build that
+# isn't from a tag. The Windows .zip needs Python 3.
+#
+# Build the relay for every platform into dist/
+relay-all:
+    @set -eu; \
+    version="$(tr -d '[:space:]' < simulink/VERSION)-dev.$(git rev-parse --short=7 HEAD)"; \
+    py=""; for c in python3 python; do \
+      if "$c" -c "import zipfile" 2>/dev/null; then py="$c"; break; fi; \
+    done; \
+    if [ -z "$py" ]; then echo "relay-all needs Python 3 to make the Windows .zip"; exit 1; fi; \
+    stage=dist/.relay-stage; \
+    rm -rf "$stage" dist/nmproxy-* dist/SHA256SUMS; mkdir -p "$stage"; \
+    for target in linux/amd64 linux/arm64 windows/amd64 darwin/arm64; do \
+      os="${target%/*}"; arch="${target#*/}"; name="nmproxy-$version-$os-$arch"; \
+      exe=""; if [ "$os" = windows ]; then exe=.exe; fi; \
+      mkdir -p "$stage/$name"; \
+      (cd nmproxy && CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath \
+        -ldflags "-s -w -X main.version=$version" -o "../$stage/$name/nmproxy$exe" ./cmd/nmproxy); \
+      cp nmproxy/nmproxy.example.yaml "$stage/$name/"; \
+      if [ "$os" = windows ]; then \
+        (cd "$stage" && "$py" -m zipfile -c "../$name.zip" "$name"); echo "wrote dist/$name.zip"; \
+      else \
+        tar -C "$stage" -czf "dist/$name.tar.gz" "$name"; echo "wrote dist/$name.tar.gz"; \
+      fi; \
+    done; \
+    rm -rf "$stage"; \
+    cd dist && { sha256sum nmproxy-* 2>/dev/null || shasum -a 256 nmproxy-*; } > SHA256SUMS; \
+    echo "wrote dist/SHA256SUMS"
 
 # Usage:
 #   just demo ri.catalog....            with the profile named default
