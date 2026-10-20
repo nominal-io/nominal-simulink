@@ -21,8 +21,6 @@
 #include "nm_thread.h"
 #include "nm_udp.h"
 
-#include <curl/curl.h>
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -112,10 +110,6 @@ struct nm_stream {
      * putting a lock on the stats path. */
     char last_error[256];
 };
-
-/* libcurl wants one process-wide init. nm_open is not expected to race with itself;
- * if that changes this needs a call-once. */
-static int g_curl_ready = 0;
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -556,11 +550,15 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
 
         s->udp = nm_udp_open(cfg->proxy_host, cfg->proxy_port, err, sizeof err);
         if (s->udp == NULL) {
-            memcpy(s->last_error, err, sizeof s->last_error > sizeof err
-                                       ? sizeof err : sizeof s->last_error);
+            snprintf(s->last_error, sizeof s->last_error, "%s", err);
             st = NM_ERR_TRANSPORT;
             goto fail;
         }
+
+        /* Announce the mapping now rather than after a full interval, so a relay that
+         * is already listening accepts the first batch. Before the sender starts, so
+         * the socket is only ever used from one thread at a time. */
+        send_hello(s);
     } else {
         /* Reserve the encode buffer from an estimate. 32 bytes per point covers tag,
          * length, a full-width timestamp and a fixed64 value. 256 per channel covers a
@@ -581,12 +579,9 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
         }
         s->encode_cap = worst_case;
 
-        if (!g_curl_ready) {
-            if (curl_global_init(CURL_GLOBAL_DEFAULT) != CURLE_OK) {
-                st = NM_ERR_TRANSPORT;
-                goto fail;
-            }
-            g_curl_ready = 1;
+        if (nm_http_global_init() != 0) {
+            st = NM_ERR_TRANSPORT;
+            goto fail;
         }
 
         s->http = nm_http_open(cfg->base_url, cfg->token, cfg->dataset_rid,
@@ -604,12 +599,6 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
         goto fail;
     }
     s->thread_started = 1;
-
-    /* Announce the mapping immediately rather than waiting a full interval, so a relay
-     * that is already listening can accept the first batch. */
-    if (cfg->mode == NM_MODE_PROXY) {
-        send_hello(s);
-    }
 
     if (status != NULL) {
         *status = NM_OK;
@@ -734,7 +723,11 @@ int64_t nm_now_nanos(void)
     FILETIME       ft;
     ULARGE_INTEGER u;
 
-    GetSystemTimeAsFileTime(&ft);
+    /* The precise variant, not GetSystemTimeAsFileTime, which moves only at the timer
+     * interrupt, 15.6 ms by default. Wall-clock mode stamps a row per step with this,
+     * and rows that share a timestamp overwrite each other in Nominal. Same cost: both
+     * read the kernel's shared time page without a system call. */
+    GetSystemTimePreciseAsFileTime(&ft);
     u.LowPart  = ft.dwLowDateTime;
     u.HighPart = ft.dwHighDateTime;
     return ((int64_t)u.QuadPart - EPOCH_DELTA_100NS) * 100;

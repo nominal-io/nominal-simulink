@@ -267,6 +267,28 @@ static void test_dropped_rows_counts_both_threads(void)
     NM_CLOSESOCK(listener);
 }
 
+/*
+ * Wall-clock mode stamps one row per step with nm_now_nanos, and rows that share a
+ * timestamp overwrite each other in Nominal. On Windows the clock once moved only at the
+ * timer interrupt, 15.6 ms apart, so a 1 kHz model lost 14 rows in 15. A clock that
+ * resolves finer than a step gives distinct values to calls made back to back.
+ */
+static void test_clock_resolves_finer_than_a_step(void)
+{
+    int64_t last = nm_now_nanos();
+    int     distinct = 0, i;
+
+    for (i = 0; i < 1000; i++) {
+        int64_t now = nm_now_nanos();
+        if (now != last) {
+            distinct++;
+            last = now;
+        }
+    }
+    printf("      (%d distinct values in 1000 back-to-back calls)\n", distinct);
+    check(distinct >= 100, "the clock changes between calls made back to back");
+}
+
 /* DIRECT mode needs somewhere to POST, so a missing base URL is refused at open. */
 static void test_open_refuses_a_missing_base_url(void)
 {
@@ -305,6 +327,7 @@ int main(void)
     test_close_is_bounded_when_the_server_never_answers();
     test_a_later_success_keeps_the_failed_status();
     test_dropped_rows_counts_both_threads();
+    test_clock_resolves_finer_than_a_step();
     test_open_refuses_a_missing_base_url();
 
     printf("\n%s\n", failures == 0 ? "all passed" : "FAILURES");
