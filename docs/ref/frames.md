@@ -80,10 +80,11 @@ A HELLO's last fields say what run in Nominal the relay makes for the execution:
 The run belongs to the execution, not the channel list, so it isn't part of `config_id`. Every
 HELLO of an execution repeats it, and a relay creates the run from the first, unless a run with
 that title and `run-start` exists already, made before the relay restarted, in which case it
-uses that one. It sets the run's end to `end-time` from the execution's first END. When every END is lost, the relay sets the end
-to the newest row it received, once the execution has sent nothing for the relay's idle timeout.
-Nominal needs a run's end after its start, so a relay moves an end at or before `run-start` to
-1 ns after it. An end on a shared run only ever moves it later.
+uses that one. It sets the run's end to `end-time` from the execution's first END. When every
+END is lost, the relay sets the end to the newest row it received, once the execution has sent
+nothing for the relay's idle timeout. Nominal needs a run's end after its start, so a relay
+moves an end at or before `run-start` to 1 ns after it. An end on a shared run only ever moves
+it later.
 
 (config-id)=
 ## config_id
