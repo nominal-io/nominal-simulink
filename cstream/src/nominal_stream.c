@@ -788,10 +788,9 @@ int64_t nm_now_nanos(void)
     FILETIME       ft;
     ULARGE_INTEGER u;
 
-    /* The precise variant, not GetSystemTimeAsFileTime, which moves only at the timer
-     * interrupt, 15.6 ms by default. Wall-clock mode stamps a row per step with this,
-     * and rows that share a timestamp overwrite each other in Nominal. Same cost: both
-     * read the kernel's shared time page without a system call. */
+    /* Wall-clock mode stamps a row per step with this, and rows that share a timestamp
+     * overwrite each other in Nominal, so the clock has to be fine enough that each step's
+     * row gets a timestamp of its own. */
     GetSystemTimePreciseAsFileTime(&ft);
     u.LowPart  = ft.dwLowDateTime;
     u.HighPart = ft.dwHighDateTime;
