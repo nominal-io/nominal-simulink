@@ -208,25 +208,25 @@ classdef SinkBlockTest < BlocksetTestCase
         function aRunThatCantBeCreatedWarnsAndTheModelRuns(tc)
             % The test profile's URL is a closed port, so creating the run fails. That
             % must not stop the model, and the warning names the title the block made.
-            [model, blk] = SinkBlockTest.directModel('nm_sink_run'); %#ok<ASGLU> used in evalc
+            [model, blk] = SinkBlockTest.directModel('nm_sink_run');
             set_param(blk, 'createRun', 'One per execution', 'executionId', '7');
-            out = evalc('sim(model)');
+            out = simOutput(model);
             tc.verifySubstring(out, ...
                 'could not create the run ''nm_sink_run, execution 7''');
             tc.verifySubstring(out, 'The rows still go to the dataset.');
         end
 
         function aRunPerModelIsTitledByTheModel(tc)
-            [model, blk] = SinkBlockTest.directModel('nm_sink_permodel'); %#ok<ASGLU> used in evalc
+            [model, blk] = SinkBlockTest.directModel('nm_sink_permodel');
             set_param(blk, 'createRun', 'One per model');
-            tc.verifySubstring(evalc('sim(model)'), ...
+            tc.verifySubstring(simOutput(model), ...
                 'could not create the run ''nm_sink_permodel''');
         end
 
         function aRunTitleIsUsedAsGiven(tc)
-            [model, blk] = SinkBlockTest.directModel('nm_sink_titled'); %#ok<ASGLU> used in evalc
+            [model, blk] = SinkBlockTest.directModel('nm_sink_titled');
             set_param(blk, 'createRun', 'One per execution', 'runTitle', '"Bench test"');
-            tc.verifySubstring(evalc('sim(model)'), 'could not create the run ''Bench test''');
+            tc.verifySubstring(simOutput(model), 'could not create the run ''Bench test''');
         end
 
         function anEmptyRefNameStopsTheRun(tc)
@@ -369,6 +369,12 @@ function v = fieldOr(s, name)
     else
         v = [];
     end
+end
+
+function out = simOutput(model) %#ok<INUSD> used in evalc
+% What sim prints, on one line. MATLAB wraps a warning to the width of the window it
+% prints to, so a phrase can break across lines in one session and not another.
+    out = regexprep(evalc('sim(model)'), '\s+', ' ');
 end
 
 function s = allMessages(err)
