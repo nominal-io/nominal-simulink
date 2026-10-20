@@ -97,7 +97,8 @@ function make_library()
             ''''', ' ...                                     % profileFile
             '1, ' ...                                        % createRun
             ''''', ' ...                                     % runTitle
-            '''default''']);                                 % refName
+            '''default'', ' ...                              % refName
+            '1']);                                           % maxDelay
 
     % --- mask -------------------------------------------------------------------
     %
@@ -197,6 +198,11 @@ function make_library()
     m.addParameter('Type', 'edit', 'Name', 'capacityRows', ...
         'Prompt', 'Buffer capacity (rows)', 'Value', '4096');
 
+    % A ceiling on how long a row waits before it is sent, for a model writing slowly.
+    % A model writing quickly is sent as the buffer fills, sooner than this.
+    m.addParameter('Type', 'edit', 'Name', 'maxDelay', ...
+        'Prompt', 'Maximum delay before sending (s)', 'Value', '1');
+
     % Simulation time is the default: it gives a run whose time axis matches the model
     % rather than the clock, which is what an offline sim wants. t0=0 lines every run of
     % a model up from zero, for comparing runs. Wall clock is for real-time and HIL.
@@ -264,7 +270,7 @@ function make_library()
          'showDropped, mode, convertStringsToChars(proxyHost), proxyPort, ' ...
          'nominal_sink_tags(tags), nominal_sink_execid(executionId, tags), ' ...
          'convertStringsToChars(profileFile), createRun, ' ...
-         'convertStringsToChars(runTitle), convertStringsToChars(refName)']);
+         'convertStringsToChars(runTitle), convertStringsToChars(refName), maxDelay']);
 
 
     % Apply it once now, so a freshly dragged block starts with the right fields greyed

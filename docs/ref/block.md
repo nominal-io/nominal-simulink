@@ -108,6 +108,13 @@ and **Run title** and **Ref name** when **Create run** is **None**.
   uses `4096`. When the run ends, the block spends up to 15 seconds sending what is left in the
   buffer, and counts any rows still unsent as dropped.
 
+**Maximum delay before sending (s)**
+: Default `1`. The longest a row waits in the buffer before the block sends it. The block sends
+  sooner as rows arrive faster: in direct mode once 4096 rows are waiting, or half the buffer
+  if that is less, and in proxy mode once a packet's worth is, as
+  [The frame protocol](frames.md#limits) sizes it. A value of 0 or less uses `1`. See
+  [Timing and dropped rows](../guides/timing.md#how-often-the-block-sends).
+
 **Timestamps**
 : Default **Simulation time from start**. **Simulation time from start** stamps each row with the
   time the run started plus its simulation time. **Directly record simulation time (t0=0)**

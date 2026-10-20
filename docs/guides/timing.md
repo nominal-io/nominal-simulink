@@ -32,12 +32,28 @@ Use it when the model runs in real time alongside hardware, so its points line u
 recorded by other systems. A simulation that runs faster than real time puts all its points
 into the short time the run actually took.
 
+## How often the block sends
+
+Each row goes into the block's buffer, and the block sends from there in the background. A row
+waits at most **Maximum delay before sending (s)**, `1` second by default, so a model that writes
+a few rows a second has each one in Nominal within about a second. A model that writes faster
+doesn't wait that long. In direct mode the block sends once 4096 rows are waiting, or half the
+buffer if that is less, and in proxy mode once a packet's worth is. The faster rows arrive,
+the more often it sends.
+
+A longer maximum delay means fewer, larger requests, and data that lags the model by up to
+that long while it runs. A shorter one means data that lags less, and a request for every few
+rows when the model writes slowly.
+
 ## When sending falls behind
 
-While the model runs, the block never waits for the network. Each row goes into a buffer, and
-the rows are sent from there in the background. If the buffer is full when a new row arrives,
-the block drops that row and the model carries on. Rows are also dropped when sending them
-fails.
+While the model runs, the block never waits for the network. If the buffer is full when a new
+row arrives, the block drops that row and the model carries on. Rows are also dropped when
+sending them fails.
+
+A row leaves the buffer as soon as the block has prepared it for sending, so a request that
+Nominal is slow to answer takes no room from the rows arriving behind it. The buffer fills only
+when rows arrive faster than Nominal takes them for longer than the buffer holds.
 
 When a run has dropped rows, MATLAB shows a warning as the run ends:
 

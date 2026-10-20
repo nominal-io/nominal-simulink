@@ -70,8 +70,12 @@ enum {
     P_RUN_MODE,       /* one of the RUN_ values below */
     P_RUN_TITLE,      /* empty for one made from the model's name */
     P_REF_NAME,       /* the name the dataset goes under in the run */
+    P_MAX_DELAY,      /* seconds a row may wait in the buffer before it is sent */
     P_COUNT
 };
+
+/* What Maximum delay before sending (s) means when it is 0 or less. */
+#define DEFAULT_MAX_DELAY_S 1.0
 
 /* One-based to match a Simulink mask popup, whose evaluated value is the option
  * index. Keeping the C side aligned with the mask avoids an off-by-one that would
@@ -787,7 +791,18 @@ static void mdlStart(SimStruct *S)
         cfg.token    = profile->token;
     }
     cfg.capacity_rows = (size_t)mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
-    cfg.max_batch_delay_ms = 100;
+    {
+        /* Seconds in the dialog, milliseconds in the library, and at least one of
+         * them, since 0 ms would ask the library for its own default. */
+        double delay = mxGetScalar(ssGetSFcnParam(S, P_MAX_DELAY));
+        if (!(delay > 0.0)) {
+            delay = DEFAULT_MAX_DELAY_S;
+        }
+        delay *= 1000.0;
+        cfg.max_batch_delay_ms = delay < 1.0 ? 1u
+                               : delay > 4294967295.0 ? 4294967295u
+                               : (uint32_t)llround(delay);
+    }
     /* An RTOS has no OS trust store, so a target needs an explicit bundle. On the
      * desktop, NULL leaves libcurl to use its default trust store (the Windows
      * certificate store, through Schannel, on Windows). */

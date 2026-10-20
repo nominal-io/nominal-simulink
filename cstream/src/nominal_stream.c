@@ -43,6 +43,16 @@
  * long a restarted relay discards data, at a cost of one HELLO datagram per second. */
 #define NM_HELLO_INTERVAL_MS 1000
 
+/* How often the sender looks at the ring between sends. The producer never signals it,
+ * so this is how soon a ring filling quickly gets sent: short enough that the ring
+ * can't fill between two looks at any rate the network could keep up with anyway, and
+ * cheap enough to leave on, since a look is one atomic load. */
+#define NM_POLL_INTERVAL_MS 10
+
+/* The default for nm_config.max_batch_delay_ms: the longest a row waits in the ring
+ * when rows arrive slowly. */
+#define NM_DEFAULT_MAX_DELAY_MS 1000
+
 /* How many times proxy mode sends END at close, and how far apart. UDP can lose any one
  * of them, and a relay still busy with the final rows is the likeliest to. */
 #define NM_END_REPEATS     3
@@ -60,7 +70,7 @@ struct nm_stream {
     uint64_t  session_id;
     uint64_t  config_id;
     uint64_t  sequence;
-    uint32_t  ms_since_hello;
+    int64_t   last_hello;    /* when the last HELLO went, by nm_now_nanos */
     char     *dataset_rid;   /* kept, because HELLO re-sends it */
     nm_frame_run run;        /* likewise; title and ref_name point into run_pool */
     char        *run_pool;
@@ -81,7 +91,12 @@ struct nm_stream {
     nm_thread thread;
     int       thread_started;
     volatile int running;
-    uint32_t  batch_delay_ms;
+
+    /* When the sender sends: once send_threshold rows are waiting, or once the oldest
+     * waiting row is max_delay_ms old, whichever comes first. It looks every poll_ms. */
+    size_t    send_threshold;
+    uint32_t  max_delay_ms;
+    uint32_t  poll_ms;
 
     /* 0 until nm_close, which sets it to the wall-clock instant the final flush must
      * finish by, before stopping the sender -- so a drain the sender is part-way
@@ -261,7 +276,7 @@ static void send_hello(nm_stream *s)
     if (n > 0) {
         nm_udp_send(s->udp, buf, n);
     }
-    s->ms_since_hello = 0;
+    s->last_hello = nm_now_nanos();
 }
 
 /*
@@ -353,6 +368,12 @@ static void abandon_remaining(nm_stream *s)
  *
  * A wrapped ring yields its rows in two runs; each becomes its own request, which
  * costs an extra POST at the wrap and keeps the encoder reading contiguous memory.
+ *
+ * The ring releases a batch's rows as soon as they are encoded, not once the request
+ * has been answered: the request reads the encode buffer, and a failed one drops its
+ * rows rather than retrying them from the ring. So a request in flight, however slow,
+ * holds no ring space, and the ring only fills when rows arrive faster than a whole
+ * request takes.
  */
 static void drain_direct(nm_stream *s)
 {
@@ -387,11 +408,11 @@ static void drain_direct(nm_stream *s)
         encoded = nm_encode_request(s->encode_buf, s->encode_cap,
                                     s->channels, s->channel_count,
                                     timestamps, rows, values);
+        nm_ring_consume(&s->ring, rows);
         if (encoded == 0) {
             /* A single row that will not fit cannot be made smaller. Discard it
              * rather than spin on it forever. */
             s->rows_dropped_send += rows;
-            nm_ring_consume(&s->ring, rows);
             continue;
         }
 
@@ -409,14 +430,11 @@ static void drain_direct(nm_stream *s)
                 s->last_status = result.status;
                 memcpy(s->last_error, result.error, sizeof s->last_error);
             }
-            /* Retries are already exhausted inside nm_http_post. Holding the rows
-             * would wedge the ring behind a request that may never succeed, so they
-             * are counted as lost and released. */
+            /* Retries are already exhausted inside nm_http_post, and the rows have
+             * left the ring, so they are counted as lost. */
             s->requests_failed   += 1;
             s->rows_dropped_send += rows;
         }
-
-        nm_ring_consume(&s->ring, rows);
     }
 }
 
@@ -429,21 +447,49 @@ static void drain(nm_stream *s)
     }
 }
 
+/*
+ * The sender's schedule. It looks at the ring every poll_ms and sends when enough rows
+ * are waiting to be worth a request, or a datagram, or when the oldest waiting row has
+ * waited max_delay_ms. So a stream fed slowly is sent at most max_delay_ms behind the
+ * model, and one fed quickly is sent as fast as its rows arrive, with the ring never
+ * more than about half full before a send starts.
+ *
+ * A row's age is counted from the first look that found rows waiting, so it is under
+ * by up to one poll. Rows that arrive during a send are counted from when the send
+ * started, which is over by the send's duration, and so errs towards sending sooner.
+ */
 static NM_THREAD_FN(sender_main, arg)
 {
     nm_stream *s = arg;
+    int64_t    waiting_since = 0;   /* 0 while the ring was empty at the last look */
+    int64_t    max_delay = (int64_t)s->max_delay_ms * 1000000;
 
     while (s->running) {
-        nm_sleep_ms(s->batch_delay_ms);
+        int64_t now;
+        size_t  waiting;
 
-        if (s->mode == NM_MODE_PROXY) {
-            s->ms_since_hello += s->batch_delay_ms;
-            if (s->ms_since_hello >= NM_HELLO_INTERVAL_MS) {
-                send_hello(s);
-            }
+        nm_sleep_ms(s->poll_ms);
+        now = nm_now_nanos();
+
+        if (s->mode == NM_MODE_PROXY &&
+            now - s->last_hello >= (int64_t)NM_HELLO_INTERVAL_MS * 1000000) {
+            send_hello(s);
+        }
+
+        waiting = nm_ring_readable(&s->ring);
+        if (waiting == 0) {
+            waiting_since = 0;
+            continue;
+        }
+        if (waiting_since == 0) {
+            waiting_since = now;
+        }
+        if (waiting < s->send_threshold && now - waiting_since < max_delay) {
+            continue;
         }
 
         drain(s);
+        waiting_since = nm_ring_readable(&s->ring) > 0 ? now : 0;
     }
     NM_THREAD_RETURN;
 }
@@ -503,8 +549,29 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
     }
 
     s->mode             = cfg->mode;
-    s->batch_delay_ms   = cfg->max_batch_delay_ms > 0 ? cfg->max_batch_delay_ms : 100u;
+    s->max_delay_ms     = cfg->max_batch_delay_ms > 0 ? cfg->max_batch_delay_ms
+                                                      : NM_DEFAULT_MAX_DELAY_MS;
+    s->poll_ms          = s->max_delay_ms < NM_POLL_INTERVAL_MS ? s->max_delay_ms
+                                                                : NM_POLL_INTERVAL_MS;
     s->close_timeout_ms = cfg->close_timeout_ms > 0 ? cfg->close_timeout_ms : 15000u;
+
+    /* How many waiting rows make a send worth starting before the delay is up. A
+     * datagram costs the same however full it is, so proxy mode sends as soon as one
+     * is full, which also spreads the datagrams out rather than bursting them at a
+     * relay. A request has a fixed cost worth amortising, so direct mode waits for a
+     * full one, but never for more than half the ring: the rest is the room the ring
+     * needs for the rows that arrive before the next look. */
+    if (cfg->mode == NM_MODE_PROXY) {
+        s->send_threshold = nm_frame_rows_per_datagram(cfg->channel_count);
+    } else {
+        s->send_threshold = cfg->capacity_rows / 2;
+        if (s->send_threshold > NM_MAX_ROWS_PER_REQUEST) {
+            s->send_threshold = NM_MAX_ROWS_PER_REQUEST;
+        }
+    }
+    if (s->send_threshold == 0) {
+        s->send_threshold = 1;
+    }
 
     if (copy_tags(s, cfg->tags, cfg->tag_count) != 0 ||
         copy_channels(s, cfg->channel_names, cfg->channel_count) != 0) {

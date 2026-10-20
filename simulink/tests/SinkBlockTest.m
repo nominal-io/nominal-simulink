@@ -167,6 +167,20 @@ classdef SinkBlockTest < BlocksetTestCase
             tc.verifyEqual(times, int64((0:numel(times) - 1)' * 1e7));
         end
 
+        function theMaximumDelayReachesTheStream(tc)
+            % The field is seconds in the dialog and milliseconds in the library. A
+            % short delay and a zero, which means the default, both stream every row.
+            for delay = {'0.02', '0'}
+                [model, blk] = SinkBlockTest.proxyModel('nm_sink_delay');
+                set_param(blk, 'maxDelay', delay{1});
+                frames = SinkBlockTest.capture(tc, blk, @() sim(model));
+                data = frames(strcmp({frames.type}, 'data'));
+                tc.assertNotEmpty(data, 'the block sent no rows.');
+                tc.verifyNumElements(vertcat(data.timestamps), 6);
+                bdclose(model);
+            end
+        end
+
         function aRunThatCantBeCreatedWarnsAndTheModelRuns(tc)
             % The test profile's URL is a closed port, so creating the run fails. That
             % must not stop the model, and the warning names the title the block made.

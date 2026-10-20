@@ -132,7 +132,7 @@ static NM_THREAD_FN(serve_script, arg)
 static const char *const NAMES[] = { "a", "b", "c" };
 
 static nm_stream *open_direct(unsigned short port, size_t capacity_rows,
-                              uint32_t close_timeout_ms)
+                              uint32_t max_delay_ms, uint32_t close_timeout_ms)
 {
     char      url[64];
     nm_config cfg;
@@ -146,7 +146,7 @@ static nm_stream *open_direct(unsigned short port, size_t capacity_rows,
     cfg.channel_names      = NAMES;
     cfg.channel_count      = 3;
     cfg.capacity_rows      = capacity_rows;
-    cfg.max_batch_delay_ms = 20;
+    cfg.max_batch_delay_ms = max_delay_ms;
     cfg.close_timeout_ms   = close_timeout_ms;
     return nm_open(&cfg, NULL);
 }
@@ -172,7 +172,7 @@ static void test_close_is_bounded_when_the_server_never_answers(void)
 {
     unsigned short port;
     sock_t         listener = listen_loopback(&port);
-    nm_stream     *s = open_direct(port, 64, 1000);
+    nm_stream     *s = open_direct(port, 64, 20, 1000);
     nm_stats_t     st;
     int64_t        start, elapsed_ms;
 
@@ -216,7 +216,7 @@ static void test_a_later_success_keeps_the_failed_status(void)
     srv.count    = 4;
     nm_thread_start(&server, serve_script, &srv);
 
-    s = open_direct(port, 64, 5000);
+    s = open_direct(port, 64, 20, 5000);
     check(s != NULL, "a direct stream opens against the scripted server");
     if (s == NULL) {
         NM_CLOSESOCK(srv.listener);
@@ -246,7 +246,7 @@ static void test_dropped_rows_counts_both_threads(void)
 {
     unsigned short port;
     sock_t         listener = listen_loopback(&port);
-    nm_stream     *s = open_direct(port, 4, 1000);
+    nm_stream     *s = open_direct(port, 4, 20, 1000);
     nm_stats_t     st;
 
     check(s != NULL, "a four-row direct stream opens against the fake server");
@@ -255,14 +255,130 @@ static void test_dropped_rows_counts_both_threads(void)
         return;
     }
 
-    /* The sender holds its rows in the buffer until its request finishes, and this
-     * server never answers, so exactly four rows fit. */
+    /* Ten rows at once, before the sender's first look, so four fit and six are
+     * refused. The four then never get an answer and are dropped at close. */
     push_rows(s, 10, 1000000000LL);
     check(nm_dropped_rows(s) == 6, "rows refused by the full buffer count as dropped");
 
     nm_close_stats(s, &st);
     check(st.rows_pushed == 10 && st.rows_sent == 0 && st.rows_dropped == 10,
           "rows_dropped adds the sender's losses to the refused rows");
+
+    NM_CLOSESOCK(listener);
+}
+
+/*
+ * The sender's schedule. Rows arriving slowly wait for max_batch_delay_ms, so a slow
+ * model is a request per delay rather than a request per row. Rows arriving quickly
+ * don't wait: once half the buffer is full the sender sends, however long the delay,
+ * which is what keeps a buffer that fills in less than the delay from overflowing.
+ */
+static void test_rows_wait_for_the_delay_or_half_the_buffer(void)
+{
+    static const int statuses[] = { 204 };
+    scripted_server  srv;
+    unsigned short   port;
+    nm_thread        server;
+    nm_stream       *s;
+    nm_stats_t       st;
+
+    srv.listener = listen_loopback(&port);
+    srv.statuses = statuses;
+    srv.count    = 1;
+    nm_thread_start(&server, serve_script, &srv);
+
+    /* A 64-row buffer, so the sender sends at 32 rows, and a delay longer than this
+     * test takes. */
+    s = open_direct(port, 64, 5000, 5000);
+    check(s != NULL, "a direct stream opens against the scripted server");
+    if (s == NULL) {
+        NM_CLOSESOCK(srv.listener);
+        return;
+    }
+
+    push_rows(s, 3, 1000000000LL);
+    nm_sleep_ms(300);
+    nm_stats(s, &st);
+    check(st.requests_ok == 0 && st.rows_sent == 0,
+          "three rows wait for the delay rather than going at once");
+
+    push_rows(s, 29, 2000000000LL);
+    nm_sleep_ms(300);
+    nm_stats(s, &st);
+    check(st.requests_ok == 1 && st.rows_sent == 32,
+          "half a buffer of rows goes well before the delay is up");
+
+    nm_close_stats(s, &st);
+    nm_thread_join(server);
+    check(st.requests_ok == 1 && st.rows_dropped == 0, "and nothing was lost");
+
+    NM_CLOSESOCK(srv.listener);
+}
+
+static void test_a_short_delay_sends_a_trickle_promptly(void)
+{
+    static const int statuses[] = { 204 };
+    scripted_server  srv;
+    unsigned short   port;
+    nm_thread        server;
+    nm_stream       *s;
+    nm_stats_t       st;
+
+    srv.listener = listen_loopback(&port);
+    srv.statuses = statuses;
+    srv.count    = 1;
+    nm_thread_start(&server, serve_script, &srv);
+
+    s = open_direct(port, 64, 200, 5000);
+    check(s != NULL, "a direct stream opens against the scripted server");
+    if (s == NULL) {
+        NM_CLOSESOCK(srv.listener);
+        return;
+    }
+
+    push_rows(s, 3, 1000000000LL);
+    nm_sleep_ms(600);
+    nm_stats(s, &st);
+    check(st.requests_ok == 1 && st.rows_sent == 3,
+          "three rows go once they have waited the delay");
+
+    nm_close(s);
+    nm_thread_join(server);
+    NM_CLOSESOCK(srv.listener);
+}
+
+/*
+ * A request in flight holds no buffer space. The rows leave the buffer as they are
+ * encoded, so a slow request, or a server that never answers, doesn't fill the buffer
+ * behind it. Before this, the sender held its rows until the request finished, and a
+ * stall as long as the buffer took to fill dropped every row that arrived meanwhile.
+ */
+static void test_a_slow_request_holds_no_buffer_space(void)
+{
+    unsigned short port;
+    sock_t         listener = listen_loopback(&port);
+    nm_stream     *s = open_direct(port, 8, 20, 500);
+    nm_stats_t     st;
+
+    check(s != NULL, "an eight-row direct stream opens against the fake server");
+    if (s == NULL) {
+        NM_CLOSESOCK(listener);
+        return;
+    }
+
+    /* Four rows, half the buffer, so the sender sends them at its next look, into a
+     * request that never gets an answer. */
+    push_rows(s, 4, 1000000000LL);
+    nm_sleep_ms(200);
+
+    /* The buffer holds eight, and all eight fit only if the four in flight have left
+     * it. */
+    push_rows(s, 8, 2000000000LL);
+    check(nm_dropped_rows(s) == 0, "a full buffer of rows fits behind a request in flight");
+
+    nm_close_stats(s, &st);
+    check(st.rows_pushed == 12 && st.rows_sent == 0 && st.rows_dropped == 12,
+          "and every row is counted as lost once close gives up on them");
 
     NM_CLOSESOCK(listener);
 }
@@ -327,6 +443,9 @@ int main(void)
     test_close_is_bounded_when_the_server_never_answers();
     test_a_later_success_keeps_the_failed_status();
     test_dropped_rows_counts_both_threads();
+    test_rows_wait_for_the_delay_or_half_the_buffer();
+    test_a_short_delay_sends_a_trickle_promptly();
+    test_a_slow_request_holds_no_buffer_space();
     test_clock_resolves_finer_than_a_step();
     test_open_refuses_a_missing_base_url();
 

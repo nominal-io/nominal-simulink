@@ -122,8 +122,12 @@ typedef struct {
      * minute. */
     size_t capacity_rows;
 
-    /* How often the sender sends what is buffered. 0 means 100 ms, which matches the
-     * Rust client. Lower means fresher data and more requests. */
+    /* The longest a row waits in the buffer before the sender sends it, when rows
+     * arrive slowly. 0 means 1000. The sender sends sooner as rows arrive faster: in
+     * DIRECT mode once a request's worth is waiting, or half the buffer if that is
+     * less, and in PROXY mode once a datagram's worth is. So this bounds how far
+     * behind the producer a slow stream is, and a fast one is sent as its rows arrive,
+     * without waiting on the buffer to fill. */
     uint32_t max_batch_delay_ms;
 
     /* How long nm_close may spend sending what is still buffered. Rows not sent by

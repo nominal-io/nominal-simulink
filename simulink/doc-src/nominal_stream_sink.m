@@ -185,6 +185,15 @@
 %
 % Programmatic name: |capacityRows|. Default: |4096|.
 %
+% *Maximum delay before sending (s)* — the longest a row waits before it is sent
+%
+% A model that writes a few rows a second has each one sent within this time. A model
+% that writes faster is sent sooner: in direct mode once 4096 rows are waiting, or half
+% the buffer if that is less, and in proxy mode once a packet's worth is. A value of 0
+% or less uses 1.
+%
+% Programmatic name: |maxDelay|. Default: |1|.
+%
 % *Timestamps* — the time on each row
 %
 % *Simulation time from start* stamps each row with the time the run started plus the
