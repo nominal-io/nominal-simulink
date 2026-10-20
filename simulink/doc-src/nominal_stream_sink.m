@@ -171,7 +171,8 @@
 %
 % How often the block takes a row from its input. It is separate from the solver step:
 % with a 1 ms fixed step and a sample time of 0.01, the block writes on every tenth
-% step. A value of 0 or less, including -1, uses 0.001.
+% step. It has to be greater than 0. Simulink's -1, which inherits a sample time, isn't
+% accepted.
 %
 % Programmatic name: |sampleTime|. Default: |0.001|.
 %
@@ -180,8 +181,8 @@
 % Rows arriving while the buffer is full are dropped. In a model running in real time at
 % 1000 rows a second, 60000 rows holds a minute. The buffer is reserved when the run
 % starts, so a larger one uses more memory. When the run ends, the block spends up to 15
-% seconds sending what is left in the buffer, and counts rows still unsent as dropped. A
-% value of 0 uses 4096.
+% seconds sending what is left in the buffer, and counts rows still unsent as dropped. It
+% has to be a whole number greater than 0.
 %
 % Programmatic name: |capacityRows|. Default: |4096|.
 %
@@ -189,8 +190,8 @@
 %
 % A model that writes a few rows a second has each one sent within this time. A model
 % that writes faster is sent sooner: in direct mode once 4096 rows are waiting, or half
-% the buffer if that is less, and in proxy mode once a packet's worth is. A value of 0
-% or less uses 1.
+% the buffer if that is less, and in proxy mode once a packet's worth is. It has to be
+% greater than 0.
 %
 % Programmatic name: |maxDelay|. Default: |1|.
 %

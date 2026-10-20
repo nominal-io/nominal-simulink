@@ -9,8 +9,8 @@ text values are in quotes. Every text field in the block's dialog takes a MATLAB
 ## When you apply the dialog or start a run
 
 These errors stop the model from running. Each one starts with `Nominal Stream Sink:`, left off
-below. The channel-list errors appear as soon as you click **OK** or **Apply** in the block's
-dialog. The rest appear when the run starts.
+below. The errors about the channel list and the number fields appear as soon as you click
+**OK** or **Apply** in the block's dialog. The rest appear when the run starts.
 
 `the channel list is empty. Enter channel names in quotes, separated by commas, or click Detect from connected signal.`
 : **Channel names (comma-separated)** holds no names.
@@ -20,6 +20,16 @@ dialog. The rest appear when the run starts.
   double quotes. The block checks **Channel names (comma-separated)** when you apply the dialog,
   and **Dataset RID**, **Proxy host**, **Profile** and **Profile file** when the run starts, and
   **Run title** and **Ref name** too when **Create run** is on.
+
+`<field> must be a number greater than 0, for example <example>.`
+: **Sample time (s) — how often to write, not the solver step** or
+  **Maximum delay before sending (s)** holds 0, a negative number, text, or more than one number.
+  No value stands for the default, and Simulink's `-1`, which inherits a sample time, isn't
+  accepted.
+
+`<field> must be a whole number greater than 0, for example <example>.`
+: **Buffer capacity (rows)** holds 0, a negative number, a fraction, text, or more than one
+  number.
 
 `Dataset RID is empty. Enter the RID of the dataset to write to, in quotes.`
 : [Finding a dataset's RID](site:/quickstart/quickstart/quick/quick-dataset-rid/) shows where

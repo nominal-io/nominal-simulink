@@ -116,6 +116,9 @@ typedef struct {
     int64_t     run_start_nanos;
     int         run_shared;
 
+    /* The three below are required and must be greater than 0. nm_open refuses a zero
+     * with NM_ERR_ARG rather than putting a default in its place. */
+
     /* Rows of capacity to reserve. One row is one timestamp plus one value per
      * channel. The buffer never grows past this: nm_push discards rows instead. Size
      * it for the longest network stall worth surviving — at 1 kHz, 60000 rows is a
@@ -123,17 +126,17 @@ typedef struct {
     size_t capacity_rows;
 
     /* The longest a row waits in the buffer before the sender sends it, when rows
-     * arrive slowly. 0 means 1000. The sender sends sooner as rows arrive faster: in
-     * DIRECT mode once a request's worth is waiting, or half the buffer if that is
-     * less, and in PROXY mode once a datagram's worth is. So this bounds how far
-     * behind the producer a slow stream is, and a fast one is sent as its rows arrive,
-     * without waiting on the buffer to fill. */
+     * arrive slowly. The sender sends sooner as rows arrive faster: in DIRECT mode once
+     * a request's worth is waiting, or half the buffer if that is less, and in PROXY
+     * mode once a datagram's worth is. So this bounds how far behind the producer a
+     * slow stream is, and a fast one is sent as its rows arrive, without waiting on the
+     * buffer to fill. The Simulink block uses 1000 unless its dialog says otherwise. */
     uint32_t max_batch_delay_ms;
 
     /* How long nm_close may spend sending what is still buffered. Rows not sent by
-     * then are counted as dropped. 0 means 15000. Without the limit, every remaining
-     * batch would get its full retries and timeouts, so stopping a model with Nominal
-     * unreachable could take many minutes. */
+     * then are counted as dropped. Without the limit, every remaining batch would get
+     * its full retries and timeouts, so stopping a model with Nominal unreachable could
+     * take many minutes. The Simulink block uses 15000. */
     uint32_t close_timeout_ms;
 
     /* Path to a CA bundle for TLS verification. Supplying one explicitly, rather

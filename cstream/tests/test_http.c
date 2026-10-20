@@ -424,6 +424,8 @@ static void test_open_refuses_a_missing_base_url(void)
         cfg.channel_names = NAMES;
         cfg.channel_count = 3;
         cfg.capacity_rows = 64;
+        cfg.max_batch_delay_ms = 20;
+        cfg.close_timeout_ms   = 1000;
 
         s = nm_open(&cfg, &status);
         check(s == NULL && status == NM_ERR_ARG,

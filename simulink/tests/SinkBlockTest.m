@@ -168,15 +168,39 @@ classdef SinkBlockTest < BlocksetTestCase
         end
 
         function theMaximumDelayReachesTheStream(tc)
-            % The field is seconds in the dialog and milliseconds in the library. A
-            % short delay and a zero, which means the default, both stream every row.
-            for delay = {'0.02', '0'}
-                [model, blk] = SinkBlockTest.proxyModel('nm_sink_delay');
-                set_param(blk, 'maxDelay', delay{1});
-                frames = SinkBlockTest.capture(tc, blk, @() sim(model));
-                data = frames(strcmp({frames.type}, 'data'));
-                tc.assertNotEmpty(data, 'the block sent no rows.');
-                tc.verifyNumElements(vertcat(data.timestamps), 6);
+            % The field is seconds in the dialog and milliseconds in the library, and a
+            % short delay still streams every row.
+            [model, blk] = SinkBlockTest.proxyModel('nm_sink_delay');
+            set_param(blk, 'maxDelay', '0.02');
+            frames = SinkBlockTest.capture(tc, blk, @() sim(model));
+            data = frames(strcmp({frames.type}, 'data'));
+            tc.assertNotEmpty(data, 'the block sent no rows.');
+            tc.verifyNumElements(vertcat(data.timestamps), 6);
+        end
+
+        function numberFieldsRefuseValuesThatAreNotPositive(tc)
+            % No number field has a value that stands for its default. 0 or less used to
+            % be replaced quietly, so -1 in Sample time meant 1 ms, and text in quotes
+            % was read as the code of its first character.
+            cases = { ...
+                'sampleTime',   '0',      'Sample time (s) must be a number greater than 0'; ...
+                'sampleTime',   '-1',     'Sample time (s) must be a number greater than 0'; ...
+                'capacityRows', '0',      'Buffer capacity (rows) must be a whole number greater than 0'; ...
+                'capacityRows', '64.5',   'Buffer capacity (rows) must be a whole number greater than 0'; ...
+                'maxDelay',     '0',      'Maximum delay before sending (s) must be a number greater than 0'; ...
+                'maxDelay',     '''1''',  'Maximum delay before sending (s) must be a number greater than 0'};
+            for k = 1:size(cases, 1)
+                [model, blk] = SinkBlockTest.proxyModel(sprintf('nm_sink_number%d', k));
+                text = '';
+                % The error comes when the value is applied, which set_param does.
+                try
+                    set_param(blk, cases{k, 1}, cases{k, 2});
+                    sim(model);
+                catch err
+                    text = allMessages(err);
+                end
+                tc.verifySubstring(text, cases{k, 3}, ...
+                    sprintf('%s = %s was not refused.', cases{k, 1}, cases{k, 2}));
                 bdclose(model);
             end
         end

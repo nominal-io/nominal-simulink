@@ -10,8 +10,8 @@ behind.
 row from its input. With a 1 ms fixed step and a sample time of `0.01`, the block writes on every
 tenth step. The default, `0.001`, writes 1000 rows per simulated second.
 
-The block always uses its own sample time. A value of `-1` doesn't inherit one: any value of 0
-or less is replaced with `0.001`.
+The block always uses its own sample time, so the value has to be greater than 0. Simulink's
+`-1`, which inherits a sample time, gets an error when you apply the dialog.
 
 ## The time on each point
 

@@ -145,12 +145,23 @@ static void test_reuse_after_drain(void)
     nm_ring_free(&r);
 }
 
+/* A capacity whose byte count wraps around size_t once reserved a tiny array for a ring
+ * that believed it was huge, so the first pushes wrote past the end of it. */
+static void test_refuses_a_size_that_overflows(void)
+{
+    nm_ring r;
+
+    check(nm_ring_init(&r, SIZE_MAX / 2, CHANNELS) == -1,
+          "refuses a capacity whose size in bytes overflows");
+}
+
 int main(void)
 {
     test_fills_then_discards();
     test_roundtrip_preserves_data();
     test_wrap_splits_the_run();
     test_reuse_after_drain();
+    test_refuses_a_size_that_overflows();
 
     printf("\n%s\n", failures == 0 ? "all passed" : "FAILURES");
     return failures == 0 ? 0 : 1;

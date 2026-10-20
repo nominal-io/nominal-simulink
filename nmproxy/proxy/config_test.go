@@ -25,6 +25,7 @@ func TestLoadConfigRejectsSettingsItWouldIgnore(t *testing.T) {
 	}{
 		{"unknown log_level", "dry_run: true\nlog_level: verbose\n", "log_level"},
 		{"explicit zero idle_timeout", "dry_run: true\nidle_timeout: 0s\n", "idle_timeout"},
+		{"negative stats_interval", "dry_run: true\nstats_interval: -30s\n", "stats_interval"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := loadYAML(t, tc.yaml)

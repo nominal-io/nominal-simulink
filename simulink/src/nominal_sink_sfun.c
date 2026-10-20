@@ -74,8 +74,9 @@ enum {
     P_COUNT
 };
 
-/* What Maximum delay before sending (s) means when it is 0 or less. */
-#define DEFAULT_MAX_DELAY_S 1.0
+/* How long the end of a run may spend sending the rows still in the buffer. The docs
+ * say 15 seconds. */
+#define CLOSE_TIMEOUT_MS 15000
 
 /* One-based to match a Simulink mask popup, whose evaluated value is the option
  * index. Keeping the C side aligned with the mask avoids an off-by-one that would
@@ -165,6 +166,38 @@ static int require_text(SimStruct *S, int index, const char *label, const char *
     }
     snprintf(msg, sizeof msg, "Nominal Stream Sink: %s must be text in quotes, for "
                               "example %s.", label, example);
+    ssSetErrorStatus(S, msg);
+    return 0;
+}
+
+/*
+ * Check a number parameter is one real, finite number greater than 0, and with whole
+ * set a whole number, reporting it by its dialog label if not. Returns 1 if it is.
+ *
+ * Every number field means what it says. 0 or less used to stand for a default, so a
+ * value nobody chose ran without a word, and -1 in Sample time looked like Simulink's
+ * "inherited" while it meant 1 ms. Text in quotes used to be read as the code of its
+ * first character.
+ */
+static int require_positive(SimStruct *S, int index, const char *label,
+                            const char *example, int whole)
+{
+    static char    msg[192];
+    const mxArray *a = ssGetSFcnParam(S, index);
+    double         v = 0.0;
+
+    if (a != NULL && mxIsNumeric(a) && !mxIsComplex(a) && mxGetNumberOfElements(a) == 1) {
+        v = mxGetScalar(a);
+    }
+    if (v > 0.0 && isfinite(v) && (!whole || v == floor(v))) {
+        return 1;
+    }
+    snprintf(msg, sizeof msg,
+             whole ? "Nominal Stream Sink: %s must be a whole number greater than 0, for "
+                     "example %s."
+                   : "Nominal Stream Sink: %s must be a number greater than 0, for "
+                     "example %s.",
+             label, example);
     ssSetErrorStatus(S, msg);
     return 0;
 }
@@ -533,6 +566,14 @@ static void mdlInitializeSizes(SimStruct *S)
 
     NM_TRACE("mdlInitializeSizes: %u channels parsed\n", (unsigned)count);
 
+    /* Checked here, not when the run starts, so a bad value shows as soon as the dialog
+     * is applied, as a bad channel list does. Everything after relies on these. */
+    if (!require_positive(S, P_SAMPLE_TIME, "Sample time (s)", "0.001", 0) ||
+        !require_positive(S, P_CAPACITY, "Buffer capacity (rows)", "4096", 1) ||
+        !require_positive(S, P_MAX_DELAY, "Maximum delay before sending (s)", "1", 0)) {
+        return;
+    }
+
     if (!ssSetNumInputPorts(S, 1)) {
         return;
     }
@@ -583,14 +624,15 @@ static void mdlInitializeSizes(SimStruct *S)
 static void mdlInitializeSampleTimes(SimStruct *S)
 {
     /* An explicit discrete rate, not an inherited one: this is how often telemetry is
-     * written, which is a separate decision from the solver step. */
+     * written, which is a separate decision from the solver step. mdlInitializeSizes
+     * has checked it is greater than 0. */
     real_T ts;
 
     NM_TRACE("mdlInitializeSampleTimes enter\n");
     ts = mxGetScalar(ssGetSFcnParam(S, P_SAMPLE_TIME));
     NM_TRACE("mdlInitializeSampleTimes: ts=%g\n", ts);
 
-    ssSetSampleTime(S, 0, ts > 0.0 ? ts : 0.001);
+    ssSetSampleTime(S, 0, ts);
     ssSetOffsetTime(S, 0, 0.0);
     ssSetModelReferenceSampleTimeDefaultInheritance(S);
 }
@@ -790,18 +832,20 @@ static void mdlStart(SimStruct *S)
         cfg.base_url = profile->base_url;
         cfg.token    = profile->token;
     }
-    cfg.capacity_rows = (size_t)mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
     {
-        /* Seconds in the dialog, milliseconds in the library, and at least one of
-         * them, since 0 ms would ask the library for its own default. */
-        double delay = mxGetScalar(ssGetSFcnParam(S, P_MAX_DELAY));
-        if (!(delay > 0.0)) {
-            delay = DEFAULT_MAX_DELAY_S;
-        }
-        delay *= 1000.0;
+        /* mdlInitializeSizes has checked both are greater than 0. A capacity too large
+         * for size_t becomes the largest one, which the library can't reserve, so the
+         * run stops with the out-of-memory message instead of a cast that wraps. The
+         * delay is seconds in the dialog and milliseconds in the library, and one under a
+         * millisecond becomes one, the shortest the sender waits. */
+        double capacity = mxGetScalar(ssGetSFcnParam(S, P_CAPACITY));
+        double delay    = mxGetScalar(ssGetSFcnParam(S, P_MAX_DELAY)) * 1000.0;
+
+        cfg.capacity_rows = capacity < (double)SIZE_MAX ? (size_t)capacity : SIZE_MAX;
         cfg.max_batch_delay_ms = delay < 1.0 ? 1u
                                : delay > 4294967295.0 ? 4294967295u
                                : (uint32_t)llround(delay);
+        cfg.close_timeout_ms = CLOSE_TIMEOUT_MS;
     }
     /* An RTOS has no OS trust store, so a target needs an explicit bundle. On the
      * desktop, NULL leaves libcurl to use its default trust store (the Windows
@@ -809,9 +853,6 @@ static void mdlStart(SimStruct *S)
     cfg.ca_bundle_path = getenv("NOMINAL_CA_BUNDLE");
     if (cfg.ca_bundle_path != NULL && cfg.ca_bundle_path[0] == '\0') {
         cfg.ca_bundle_path = NULL;
-    }
-    if (cfg.capacity_rows == 0) {
-        cfg.capacity_rows = 4096;
     }
 
     /* nm_open copies the channel names, so their storage can be released below. */

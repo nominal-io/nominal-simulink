@@ -108,6 +108,12 @@ func LoadConfig(path string) (Config, []string, error) {
 		return cfg, nil, fmt.Errorf("%s: idle_timeout must be greater than zero. "+
 			"Remove it to use the default of %g minutes", path, DefaultConfig().IdleTimeout.Minutes())
 	}
+	// Zero turns the stats line off, which is a setting of its own. Below zero used to
+	// turn it off too, without saying so.
+	if cfg.StatsInterval < 0 {
+		return cfg, nil, fmt.Errorf("%s: stats_interval cannot be negative. "+
+			"Set it to 0 to turn the stats line off", path)
+	}
 	// Checked like an unknown key, and for the same reason: a typo here used to mean
 	// info without a word.
 	switch cfg.LogLevel {

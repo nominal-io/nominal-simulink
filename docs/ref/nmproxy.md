@@ -53,7 +53,8 @@ The file is YAML. A key the relay doesn't know stops it at startup. Each release
   use the default.
 
 `stats_interval`
-: Default `30s`. How often to log a [stats line](#stats). `0` turns it off.
+: Default `30s`. How often to log a [stats line](#stats). `0` turns it off, and a negative value
+  stops the relay at startup.
 
 `log_level`
 : Default `info`. One of `debug`, `info`, `warn` or `error`. In a dry run, `debug` logs every
@@ -100,6 +101,7 @@ startup.
 | `profile "<profile>" in <file> has no base_url. Add your instance's API URL to it as base_url` | The profile has no `base_url`. It is the **API URL** on your organization's **API keys** page. |
 | `<path>: idle_timeout cannot be negative` | `idle_timeout` is below zero. |
 | `<path>: idle_timeout must be greater than zero. Remove it to use the default of 5 minutes` | `idle_timeout` is zero. |
+| `<path>: stats_interval cannot be negative. Set it to 0 to turn the stats line off` | `stats_interval` is below zero. |
 | `<path>: log_level "<level>" is not one of debug, info, warn, error` | `log_level` has another value. |
 | `resolving "<listen>": …` | `listen` isn't a valid address. |
 | `listening on "<listen>": …` | The address can't be used, for example because another program has the port. |

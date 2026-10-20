@@ -491,6 +491,7 @@ static nm_stream *open_proxy_tagged(const char *const *names, size_t count,
     cfg.capacity_rows      = capacity;
     /* Long enough that the sender cannot drain the ring between the pushes below. */
     cfg.max_batch_delay_ms = 1000;
+    cfg.close_timeout_ms   = 1000;
     return nm_open(&cfg, status);
 }
 
@@ -581,6 +582,8 @@ static void test_open_refuses_a_mapping_too_large_to_send(void)
         cfg.tags          = TAGS;
         cfg.tag_count     = NTAGS;
         cfg.capacity_rows = 16;
+        cfg.max_batch_delay_ms = 1000;
+        cfg.close_timeout_ms   = 1000;
         cfg.run_title     = "Model A, execution 7";
         cfg.run_ref_name  = "default";
         cfg.run_tag_count = NTAGS;
@@ -607,6 +610,41 @@ static void test_open_refuses_a_mapping_too_large_to_send(void)
         s = nm_open(&cfg, &status);
         check(s == NULL && status == NM_ERR_TOO_LARGE,
               "nm_open refuses a run title too long for the HELLO");
+        nm_close(s);
+    }
+}
+
+/*
+ * A size or time of zero is refused, not replaced with a default. 0 ms once meant 100,
+ * so a caller that forgot the field ran with a delay it never chose and couldn't see.
+ */
+static void test_open_refuses_zero_sizes_and_times(void)
+{
+    static const char *const what[] = {
+        "nm_open refuses a zero capacity_rows",
+        "nm_open refuses a zero max_batch_delay_ms",
+        "nm_open refuses a zero close_timeout_ms",
+    };
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        nm_config  cfg;
+        nm_status  status = NM_OK;
+        nm_stream *s;
+
+        memset(&cfg, 0, sizeof cfg);
+        cfg.mode               = NM_MODE_PROXY;
+        cfg.proxy_host         = "127.0.0.1";
+        cfg.proxy_port         = 9;
+        cfg.dataset_rid        = RID;
+        cfg.channel_names      = NAMES;
+        cfg.channel_count      = NCH;
+        cfg.capacity_rows      = i == 0 ? 0 : 16;
+        cfg.max_batch_delay_ms = i == 1 ? 0 : 1000;
+        cfg.close_timeout_ms   = i == 2 ? 0 : 1000;
+
+        s = nm_open(&cfg, &status);
+        check(s == NULL && status == NM_ERR_ARG, what[i]);
         nm_close(s);
     }
 }
@@ -677,6 +715,7 @@ int main(int argc, char **argv)
     test_data_respects_mtu();
     test_rejects_malformed();
     test_open_refuses_a_mapping_too_large_to_send();
+    test_open_refuses_zero_sizes_and_times();
     test_pushed_counts_rows_the_ring_refused();
 
     if (argc > 1 && strcmp(argv[1], "--fixtures") == 0) {

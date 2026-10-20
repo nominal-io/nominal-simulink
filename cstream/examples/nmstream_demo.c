@@ -96,6 +96,7 @@ int main(int argc, char **argv)
     cfg.channel_count      = CHANNELS;
     cfg.capacity_rows      = 4096;
     cfg.max_batch_delay_ms = 100;
+    cfg.close_timeout_ms   = 15000;
 
     if (proxy_host != NULL) {
         cfg.mode       = NM_MODE_PROXY;

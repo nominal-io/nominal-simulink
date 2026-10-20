@@ -9,6 +9,12 @@ int nm_ring_init(nm_ring *r, size_t capacity_rows, size_t channel_count)
     if (r == NULL || capacity_rows == 0 || channel_count == 0) {
         return -1;
     }
+    /* The values array holds capacity_rows * channel_count doubles. calloc checks its
+     * own multiplication, but not this one, so a product that wraps would reserve a
+     * small array and the ring would write far past its end. */
+    if (capacity_rows > SIZE_MAX / channel_count / sizeof(double)) {
+        return -1;
+    }
 
     memset(r, 0, sizeof *r);
 

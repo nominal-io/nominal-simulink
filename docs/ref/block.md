@@ -99,20 +99,21 @@ and **Run title** and **Ref name** when **Create run** is **None**.
 : Default `15400`. Proxy mode only. The UDP port `nmproxy` listens on, from 1 to 65535.
 
 **Sample time (s) — how often to write, not the solver step**
-: Default `0.001`. Seconds between rows. A value of 0 or less, including `-1`, uses `0.001`.
-  See [Timing and dropped rows](../guides/timing.md#how-often-the-block-writes).
+: Default `0.001`. Seconds between rows, greater than 0. Simulink's `-1`, which inherits a
+  sample time, isn't accepted. See
+  [Timing and dropped rows](../guides/timing.md#how-often-the-block-writes).
 
 **Buffer capacity (rows)**
-: Default `4096`. How many rows the block's buffer holds while they wait to be sent. The buffer
-  is reserved in memory when the run starts, and rows arriving while it is full are dropped. `0`
-  uses `4096`. When the run ends, the block spends up to 15 seconds sending what is left in the
-  buffer, and counts any rows still unsent as dropped.
+: Default `4096`. How many rows the block's buffer holds while they wait to be sent, as a whole
+  number greater than 0. The buffer is reserved in memory when the run starts, and rows arriving
+  while it is full are dropped. When the run ends, the block spends up to 15 seconds sending
+  what is left in the buffer, and counts any rows still unsent as dropped.
 
 **Maximum delay before sending (s)**
-: Default `1`. The longest a row waits in the buffer before the block sends it. The block sends
-  sooner as rows arrive faster: in direct mode once 4096 rows are waiting, or half the buffer
-  if that is less, and in proxy mode once a packet's worth is, as
-  [The frame protocol](frames.md#limits) sizes it. A value of 0 or less uses `1`. See
+: Default `1`. The longest a row waits in the buffer before the block sends it, in seconds
+  greater than 0. The block sends sooner as rows arrive faster: in direct mode once 4096 rows
+  are waiting, or half the buffer if that is less, and in proxy mode once a packet's worth is,
+  as [The frame protocol](frames.md#limits) sizes it. See
   [Timing and dropped rows](../guides/timing.md#how-often-the-block-sends).
 
 **Timestamps**

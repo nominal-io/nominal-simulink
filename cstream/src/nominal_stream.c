@@ -49,10 +49,6 @@
  * cheap enough to leave on, since a look is one atomic load. */
 #define NM_POLL_INTERVAL_MS 10
 
-/* The default for nm_config.max_batch_delay_ms: the longest a row waits in the ring
- * when rows arrive slowly. */
-#define NM_DEFAULT_MAX_DELAY_MS 1000
-
 /* How many times proxy mode sends END at close, and how far apart. UDP can lose any one
  * of them, and a relay still busy with the final rows is the likeliest to. */
 #define NM_END_REPEATS     3
@@ -503,9 +499,12 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
     size_t     worst_case, tag_bytes = 0, i;
 
     /* Common requirements, then each mode's own. DIRECT needs a base URL to POST to
-     * and a credential. PROXY needs a relay to send to and neither of those. */
+     * and a credential. PROXY needs a relay to send to and neither of those. A zero
+     * size or time is refused rather than replaced with a default, so a caller that
+     * forgot to set one finds out here instead of running with a value it never chose. */
     if (cfg == NULL || cfg->dataset_rid == NULL || cfg->channel_names == NULL ||
         cfg->channel_count == 0 || cfg->capacity_rows == 0 ||
+        cfg->max_batch_delay_ms == 0 || cfg->close_timeout_ms == 0 ||
         (cfg->tag_count > 0 && cfg->tags == NULL)) {
         st = NM_ERR_ARG;
         goto done;
@@ -549,11 +548,10 @@ nm_stream *nm_open(const nm_config *cfg, nm_status *status)
     }
 
     s->mode             = cfg->mode;
-    s->max_delay_ms     = cfg->max_batch_delay_ms > 0 ? cfg->max_batch_delay_ms
-                                                      : NM_DEFAULT_MAX_DELAY_MS;
+    s->max_delay_ms     = cfg->max_batch_delay_ms;
     s->poll_ms          = s->max_delay_ms < NM_POLL_INTERVAL_MS ? s->max_delay_ms
                                                                 : NM_POLL_INTERVAL_MS;
-    s->close_timeout_ms = cfg->close_timeout_ms > 0 ? cfg->close_timeout_ms : 15000u;
+    s->close_timeout_ms = cfg->close_timeout_ms;
 
     /* How many waiting rows make a send worth starting before the delay is up. A
      * datagram costs the same however full it is, so proxy mode sends as soon as one
