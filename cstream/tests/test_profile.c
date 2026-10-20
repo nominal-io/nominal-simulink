@@ -80,6 +80,37 @@ static void test_reads_a_hand_edited_file(void)
           "reads tabs, CRLF, comments, quotes and an unknown key");
 }
 
+/* YAML a hand edit can add that the CLI never writes: a comment after a value, a # inside
+ * one, and a map nested under a profile. */
+static void test_reads_comments_and_nested_blocks(void)
+{
+    nm_profile p;
+
+    write_config("profiles:\n"
+                 "  default:\n"
+                 "    base_url: \"https://api.gov.nominal.io/api\" # quoted, then a comment\n"
+                 "    token: nominal_api_key_abc#def # a comment, but not the first #\n"
+                 "    extras:\n"
+                 "      token: wrong\n"
+                 "      nested:\n"
+                 "        token: also wrong\n"
+                 "    workspace_rid: ri.security.gov-staging.workspace.1\n"
+                 "  other:\n"
+                 "    base_url: https://other/api\n"
+                 "    token: other\n");
+    check(nm_profile_read(PATH, "default", &p, NULL, 0) == NM_PROFILE_OK &&
+          strcmp(p.base_url, "https://api.gov.nominal.io/api") == 0 &&
+          strcmp(p.token, "nominal_api_key_abc#def") == 0,
+          "a comment after a value is left out, and a # inside a value is kept");
+    check(strcmp(p.workspace_rid, "ri.security.gov-staging.workspace.1") == 0,
+          "a key after a nested block still belongs to the profile");
+    check(nm_profile_read(PATH, "extras", &p, NULL, 0) == NM_PROFILE_NOT_FOUND,
+          "a map nested under a profile is not a profile");
+    check(nm_profile_read(PATH, "other", &p, NULL, 0) == NM_PROFILE_OK &&
+          strcmp(p.token, "other") == 0,
+          "the profile after the nested block is read");
+}
+
 static void test_reports_each_problem(void)
 {
     nm_profile p;
@@ -122,6 +153,7 @@ int main(void)
 {
     test_reads_each_profile();
     test_reads_a_hand_edited_file();
+    test_reads_comments_and_nested_blocks();
     test_reports_each_problem();
     test_default_path();
     remove(PATH);

@@ -12,8 +12,9 @@
  *         workspace_rid: null
  *
  * A key at column zero is top level. Under `profiles:`, an indented key with no value
- * opens a profile and the keys after it belong to that profile. A key this file doesn't
- * know is skipped, since the CLI may write more than the block reads.
+ * opens a profile and the keys indented under it belong to that profile. A key this
+ * file doesn't know is skipped, since the CLI may write more than the block reads, and so
+ * is anything nested deeper than a profile's keys.
  *
  * In C rather than MATLAB so the same code can run where there is no MATLAB, such as a
  * real-time target with a profile file deployed beside the application.
@@ -59,16 +60,39 @@ static char *trim(char *s)
     return s;
 }
 
-/* A hand-edited file may quote a value. The CLI doesn't. */
-static char *unquote(char *s)
+/* The text of a value. A hand-edited file may quote it, or follow it with a comment,
+ * which starts at a # after whitespace. The CLI does neither. */
+static char *value_text(char *s)
 {
-    size_t n = strlen(s);
+    char *p;
 
-    if (n >= 2 && s[0] == s[n - 1] && (s[0] == '"' || s[0] == '\'')) {
-        s[n - 1] = '\0';
-        return s + 1;
+    if (s[0] == '"' || s[0] == '\'') {
+        char *end = strchr(s + 1, s[0]);
+
+        if (end != NULL) {
+            *end = '\0';
+            return s + 1;
+        }
+        return s;
     }
-    return s;
+    for (p = s + 1; *p != '\0'; p++) {
+        if (*p == '#' && (p[-1] == ' ' || p[-1] == '\t')) {
+            *p = '\0';
+            break;
+        }
+    }
+    return trim(s);
+}
+
+/* Leading spaces and tabs, which is what makes a key belong to the key above it. */
+static int indent_of(const char *line)
+{
+    int n = 0;
+
+    while (line[n] == ' ' || line[n] == '\t') {
+        n++;
+    }
+    return n;
 }
 
 /* PyYAML writes an unset optional field as `null`, so a profile created without a
@@ -98,6 +122,9 @@ nm_profile_status nm_profile_read(const char *path, const char *name, nm_profile
     char             *line;
     FILE             *f;
     int               in_profiles = 0, in_ours = 0, found = 0;
+    /* Where profile names sit, where a profile's keys sit, and the start of a nested
+     * block being skipped. -1 until known. */
+    int               name_indent = -1, key_indent = -1, skip_indent = -1;
     nm_profile_status st = NM_PROFILE_OK;
 
     if (path == NULL || path[0] == '\0') {
@@ -123,7 +150,8 @@ nm_profile_status nm_profile_read(const char *path, const char *name, nm_profile
     }
 
     while (fgets(line, LINE_BYTES, f) != NULL) {
-        char *text = trim(line);
+        int   indent = indent_of(line);
+        char *text   = trim(line);
         char *colon, *key, *value;
 
         if (text[0] == '\0' || text[0] == '#') {
@@ -131,13 +159,21 @@ nm_profile_status nm_profile_read(const char *path, const char *name, nm_profile
         }
 
         /* Column zero is top level: `version:` or `profiles:`. */
-        if (line[0] != ' ' && line[0] != '\t') {
+        if (indent == 0) {
             in_profiles = strncmp(text, "profiles:", 9) == 0;
             in_ours     = 0;
+            name_indent = key_indent = skip_indent = -1;
             continue;
         }
         if (!in_profiles) {
             continue;
+        }
+        /* Inside a nested block, such as a map under a profile, until it ends. */
+        if (skip_indent >= 0) {
+            if (indent > skip_indent) {
+                continue;
+            }
+            skip_indent = -1;
         }
 
         /* Split on the first colon only: URLs and tokens have colons of their own. */
@@ -147,15 +183,28 @@ nm_profile_status nm_profile_read(const char *path, const char *name, nm_profile
         }
         *colon = '\0';
         key   = trim(text);
-        value = unquote(trim(colon + 1));
+        value = value_text(trim(colon + 1));
 
         if (value[0] == '\0') {
-            /* A key with no value opens a profile. */
-            in_ours = strcmp(unquote(key), name) == 0;
-            found   = found || in_ours;
+            /* A key with no value opens a profile when it sits where the profile names
+             * do. Deeper, it opens a block the profile's keys aren't in. */
+            if (name_indent >= 0 && indent != name_indent) {
+                skip_indent = indent;
+                continue;
+            }
+            name_indent = indent;
+            key_indent  = -1;
+            in_ours     = strcmp(value_text(key), name) == 0;
+            found       = found || in_ours;
             continue;
         }
         if (!in_ours) {
+            continue;
+        }
+        if (key_indent < 0) {
+            key_indent = indent;
+        }
+        if (indent != key_indent) {
             continue;
         }
         if (is_null(value)) {
