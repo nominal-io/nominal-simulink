@@ -3,6 +3,8 @@
 {.lead}
 Stream signals from a running Simulink model into a Nominal dataset.
 
+To upload, download or stream from MATLAB scripts, see [Nominal for MATLAB](site:/matlab/client/).
+
 ```{toctree}
 :hidden:
 :caption: Guides
