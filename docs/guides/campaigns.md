@@ -4,7 +4,7 @@
 Execute a model many times into one dataset, with every execution starting at time zero, tagged
 so the executions stay apart, and each one a run in Nominal.
 
-[Simulation before hardware](site:/quickstart/quickstart/fundamentals/stories/simulation-first/)
+[Simulation before hardware](site:/platform/data-model/paradigms/stories/simulation-first/)
 describes this way of organizing simulation data: one dataset for the model, every execution
 written from the same time zero, each execution's points tagged with what identifies it, and a
 run for each execution. The block does each part.
@@ -22,13 +22,13 @@ run for each execution. The block does each part.
 
 Every execution starts at the Unix epoch, so in a workbook the runs overlay without shifting.
 Open a workbook from one execution's run and add the others, as
-[Simulation before hardware](site:/quickstart/quickstart/fundamentals/stories/simulation-first/#compare-executions)
+[Simulation before hardware](site:/platform/data-model/paradigms/stories/simulation-first/#compare-executions)
 describes.
 
 For hundreds or thousands of executions, set **Create run** to **One per model** instead. Every
 execution then goes into one run, and in a workbook **Split by tags** on `execution-id` plots
 each execution as its own series, as
-[Large campaigns](site:/quickstart/quickstart/fundamentals/organization/simulation/#large-campaigns)
+[Large campaigns](site:/platform/data-model/organization/simulation/#large-campaigns)
 shows. The run shows every point in the dataset, so keep each model's executions in a dataset of
 their own.
 
