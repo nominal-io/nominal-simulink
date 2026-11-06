@@ -39,7 +39,7 @@ and **Run title** and **Ref name** when **Create run** is **None**.
   model apart in a dataset they share. Enter a two-column string array with one row per tag,
   such as `["model" "A"; "execution-id" "7"]`, a cell array of the same shape, a `dictionary`
   or a `containers.Map`. A value can be a number. Keys can't be empty or repeat. See
-  [Simulation before hardware](site:/quickstart/quickstart/fundamentals/stories/simulation-first/)
+  [Simulation before hardware](site:/platform/data-model/paradigms/stories/simulation-first/)
   for how tags and runs fit together.
 
 **Execution ID**
