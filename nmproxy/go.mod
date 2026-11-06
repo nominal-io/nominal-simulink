@@ -2,6 +2,11 @@ module github.com/nominal-io/nominal-simulink/nmproxy
 
 go 1.25.0
 
+// Go 1.27.3 and 1.26.10 are the first releases that reject certificates from the eight
+// eMudhra intermediate CAs whose private keys leaked in October 2026. A Go older than
+// the one named here downloads it and builds with that instead.
+toolchain go1.27.3
+
 require (
 	github.com/nominal-io/nominal-streaming-go v0.0.0-20260430170328-964343ec569d
 	gopkg.in/yaml.v3 v3.0.1
