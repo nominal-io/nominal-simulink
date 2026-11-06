@@ -226,8 +226,8 @@ func TestARunThatCantBeCreatedOnlyCostsTheRun(t *testing.T) {
 // --- the requests NominalRuns makes, against a fake Nominal
 
 type request struct {
-	method, path, auth string
-	body               map[string]any
+	method, path, auth, userAgent string
+	body                          map[string]any
 }
 
 // fakeNominal answers each request with the next of replies, and keeps the requests.
@@ -243,7 +243,8 @@ func (f *fakeNominal) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	_ = json.Unmarshal(raw, &body)
 
 	f.mu.Lock()
-	f.requests = append(f.requests, request{req.Method, req.URL.Path, req.Header.Get("Authorization"), body})
+	f.requests = append(f.requests, request{req.Method, req.URL.Path,
+		req.Header.Get("Authorization"), req.Header.Get("User-Agent"), body})
 	reply := "500 {}"
 	if len(f.replies) > 0 {
 		reply, f.replies = f.replies[0], f.replies[1:]
@@ -262,7 +263,7 @@ func newNominalRuns(t *testing.T, workspace string, replies ...string) (*Nominal
 	srv := httptest.NewServer(fake)
 	t.Cleanup(srv.Close)
 	return NewNominalRuns(Profile{BaseURL: srv.URL + "/", Token: "test-key", WorkspaceRID: workspace},
-		quietLogger()), fake
+		"1.2.3-test", quietLogger()), fake
 }
 
 // asJSON turns v into what a JSON body decodes to, for comparing with a request's body.
@@ -301,6 +302,9 @@ func TestCreatingARun(t *testing.T) {
 	got := fake.requests[1]
 	if got.method != "POST" || got.path != "/scout/v1/run" || got.auth != "Bearer test-key" {
 		t.Errorf("request = %s %s with %q", got.method, got.path, got.auth)
+	}
+	if got.userAgent != "nominal-simulink/1.2.3-test" {
+		t.Errorf("User-Agent = %q, want nominal-simulink/1.2.3-test", got.userAgent)
 	}
 	want := asJSON(t, map[string]any{
 		"title":       "Model A, execution 7",

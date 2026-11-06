@@ -17,7 +17,7 @@
 
 #include "nominal_stream.h"
 #include "nm_encode.h"   /* nm_split_timestamp */
-#include "nm_http.h"     /* nm_http_global_init */
+#include "nm_http.h"     /* nm_http_global_init, NM_USER_AGENT */
 
 #include <curl/curl.h>
 
@@ -354,6 +354,7 @@ static int request(const nm_run_config *cfg, const char *method, const char *pat
     curl_easy_setopt(curl, CURLOPT_URL, url.data);
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, method);
     curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, NM_USER_AGENT);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body->data);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)body->len);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, collect);

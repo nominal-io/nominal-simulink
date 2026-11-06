@@ -124,6 +124,7 @@ nm_http *nm_http_open(const char *base_url, const char *token,
     curl_easy_setopt(h->curl, CURLOPT_URL, h->url);
     curl_easy_setopt(h->curl, CURLOPT_POST, 1L);
     curl_easy_setopt(h->curl, CURLOPT_HTTPHEADER, h->headers);
+    curl_easy_setopt(h->curl, CURLOPT_USERAGENT, NM_USER_AGENT);
     curl_easy_setopt(h->curl, CURLOPT_WRITEFUNCTION, collect_response);
     curl_easy_setopt(h->curl, CURLOPT_WRITEDATA, h);
     curl_easy_setopt(h->curl, CURLOPT_NOSIGNAL, 1L);

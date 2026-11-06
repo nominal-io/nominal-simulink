@@ -72,7 +72,7 @@ func run(configPath string) error {
 		}
 		defer nw.Close()
 		writer = nw
-		runs = proxy.NewNominalRuns(cfg.Nominal, log)
+		runs = proxy.NewNominalRuns(cfg.Nominal, version, log)
 		log.Info("writing to Nominal", "profile", cfg.Profile, "base_url", cfg.Nominal.BaseURL)
 	}
 

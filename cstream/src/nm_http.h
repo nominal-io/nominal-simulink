@@ -21,6 +21,10 @@
 
 typedef struct nm_http nm_http;
 
+/* The User-Agent header on every request to Nominal. CMake sets NM_VERSION from
+ * simulink/VERSION. */
+#define NM_USER_AGENT "nominal-simulink/" NM_VERSION
+
 /*
  * libcurl's one process-wide initialisation, done the first time any request is made.
  * Returns 0 once it has happened, -1 if libcurl refused. Not safe to call from two

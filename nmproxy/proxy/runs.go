@@ -54,6 +54,7 @@ type NominalRuns struct {
 	baseURL   string
 	token     string
 	workspace string
+	userAgent string
 	client    *http.Client
 
 	// Held across a shared run's search and creation, so sessions that start together
@@ -63,12 +64,15 @@ type NominalRuns struct {
 	shared map[string]string // title to RID
 }
 
-func NewNominalRuns(p Profile, log *slog.Logger) *NominalRuns {
+// NewNominalRuns makes its requests with p's URL and API key. version is the relay's, for
+// the User-Agent header.
+func NewNominalRuns(p Profile, version string, log *slog.Logger) *NominalRuns {
 	return &NominalRuns{
 		log:       log,
 		baseURL:   strings.TrimRight(p.BaseURL, "/"),
 		token:     p.Token,
 		workspace: p.WorkspaceRID,
+		userAgent: "nominal-simulink/" + version,
 		client:    &http.Client{Timeout: 15 * time.Second},
 		shared:    map[string]string{},
 	}
@@ -239,6 +243,7 @@ func (n *NominalRuns) do(ctx context.Context, method, path string, body, out any
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+n.token)
+	req.Header.Set("User-Agent", n.userAgent)
 
 	resp, err := n.client.Do(req)
 	if err != nil {

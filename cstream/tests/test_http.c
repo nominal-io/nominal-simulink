@@ -67,10 +67,12 @@ typedef struct {
     sock_t     listener;
     const int *statuses;   /* one per request, answered in order */
     int        count;
+    char       first[8192];   /* the first request's headers */
 } scripted_server;
 
-/* Read one request: headers, then as many body bytes as Content-Length says. */
-static void read_request(sock_t c)
+/* Read one request: headers, then as many body bytes as Content-Length says. Copies
+ * the headers to seen, when it isn't NULL. */
+static void read_request(sock_t c, char *seen, size_t seen_len)
 {
     char   buf[8192];
     size_t have = 0;
@@ -88,6 +90,9 @@ static void read_request(sock_t c)
     }
     if (end == NULL) {
         return;
+    }
+    if (seen != NULL) {
+        snprintf(seen, seen_len, "%.*s", (int)(end + 4 - buf), buf);
     }
     {
         const char *cl = strstr(buf, "Content-Length:");
@@ -117,7 +122,7 @@ static NM_THREAD_FN(serve_script, arg)
         char   reply[128];
         sock_t c = accept(srv->listener, NULL, NULL);
 
-        read_request(c);
+        read_request(c, i == 0 ? srv->first : NULL, sizeof srv->first);
         snprintf(reply, sizeof reply,
                  "HTTP/1.1 %d X\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
                  srv->statuses[i]);
@@ -327,6 +332,7 @@ static void test_a_short_delay_sends_a_trickle_promptly(void)
     srv.listener = listen_loopback(&port);
     srv.statuses = statuses;
     srv.count    = 1;
+    srv.first[0] = '\0';
     nm_thread_start(&server, serve_script, &srv);
 
     s = open_direct(port, 64, 200, 5000);
@@ -345,6 +351,8 @@ static void test_a_short_delay_sends_a_trickle_promptly(void)
     nm_close(s);
     nm_thread_join(server);
     NM_CLOSESOCK(srv.listener);
+    check(strstr(srv.first, "User-Agent: nominal-simulink/" NM_VERSION "\r\n") != NULL,
+          "and the request names the client and its version");
 }
 
 /*

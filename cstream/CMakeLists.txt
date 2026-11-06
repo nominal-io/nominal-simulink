@@ -45,6 +45,10 @@ target_include_directories(nominalstream
   PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+# The version from simulink/VERSION, for the User-Agent header. PUBLIC so the tests can
+# check the header against it.
+target_compile_definitions(nominalstream PUBLIC NM_VERSION="${NM_VERSION}")
+
 # Request bodies are sent uncompressed (Content-Encoding: identity), which keeps libzstd
 # out of the QNX cross-compile. Probed against the live server 2026-08-31: it returns
 # 204 for `identity`, for no Content-Encoding header at all, for `zstd`, and for the

@@ -194,6 +194,8 @@ static void test_begin_creates_a_run(void)
     check(strncmp(srv.seen[0], "POST /scout/v1/run ", 19) == 0, "begin POSTs to /scout/v1/run");
     check(strstr(srv.seen[0], "Authorization: Bearer test-not-a-real-key") != NULL,
           "with the API key");
+    check(strstr(srv.seen[0], "User-Agent: nominal-simulink/" NM_VERSION "\r\n") != NULL,
+          "naming the client and its version");
     check(strstr(srv.seen[0], "\"title\":\"Model A, execution 7\"") != NULL &&
           strstr(srv.seen[0], "\"startTime\":{\"secondsSinceEpoch\":1,"
                               "\"offsetNanoseconds\":500000000}") != NULL,
