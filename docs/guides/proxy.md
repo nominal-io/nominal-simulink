@@ -35,7 +35,7 @@ later.
 the same file the block reads in direct mode. On the relay computer, signed in as the account
 that will run `nmproxy`, create `~/.config/nominal/config.yml`
 (`%USERPROFILE%\.config\nominal\config.yml` on Windows) as
-[API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows, unless it's there already.
+[API keys setup](site:/quickstart/api-keys-setup/) shows, unless it's there already.
 
 Then create `nmproxy.yaml`:
 

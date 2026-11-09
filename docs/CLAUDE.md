@@ -32,7 +32,7 @@ hub's quickstart pages rather than describing the app from memory.
   profile in Nominal's config file.
 - Text values in examples keep their single quotes, since the block's text fields take MATLAB
   expressions.
-- Link to other projects on the hub as `[text](site:/{lang}/{project}/{page}/)`, never with an
+- Link to other projects on the hub as `[text](site:/{project}/{page}/)`, never with an
   absolute URL, so the hub's offline copy works.
 - `% SCREENSHOT:` lines are placeholders for screenshots still to be taken.
 

@@ -14,7 +14,7 @@ The block reads your API key and your instance's URL from a profile in Nominal's
 the file Nominal's other clients read too, so the key is never saved into the model file. It
 uses the profile named `default`. A computer already set up for another Nominal client, such as
 the Python client, has one. Otherwise
-[API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows how to create a key and save
+[API keys setup](site:/quickstart/api-keys-setup/) shows how to create a key and save
 it in the file.
 
 ## 3. Create a dataset
@@ -23,7 +23,7 @@ The block writes to a dataset that already exists. In the Nominal app, open the 
 page (in the sidebar, click **Data**, then **Data sources**), click **NEW DATASET**, enter a name,
 and click **CREATE DATASET**. On the new dataset's page, hover over **RID** in the **Details**
 section and click the copy icon.
-[Finding a dataset's RID](site:/quickstart/quickstart/quick/quick-dataset-rid/) has other ways
+[Finding a dataset's RID](site:/quickstart/quick/quick-dataset-rid/) has other ways
 to get the RID.
 
 ## 4. Build the model
@@ -63,7 +63,7 @@ Open the dataset in Nominal. The dataset now has the channels `noise`, `chirp` a
 ## If nothing arrives
 
 When the run stops with a message about the Nominal config file or a profile, the message names
-the file and what it is missing. [API keys setup](site:/quickstart/quickstart/api-keys-setup/)
+the file and what it is missing. [API keys setup](site:/quickstart/api-keys-setup/)
 shows what the file holds.
 
 When Simulink reports that it can't evaluate **Dataset RID**, the value is missing its quotes.

@@ -32,7 +32,7 @@ below. The errors about the channel list and the number fields appear as soon as
   number.
 
 `Dataset RID is empty. Enter the RID of the dataset to write to, in quotes.`
-: [Finding a dataset's RID](site:/quickstart/quickstart/quick/quick-dataset-rid/) shows where
+: [Finding a dataset's RID](site:/quickstart/quick/quick-dataset-rid/) shows where
   to copy it.
 
 `Profile is empty. Enter the name of a profile in your Nominal config file, such as 'default'.`
@@ -40,7 +40,7 @@ below. The errors about the channel list and the number fields appear as soon as
 
 `could not read the Nominal config file <path>. Create it with a profile holding your API key and base URL, or set Profile file to where yours is.`
 : There is no config file at `<path>`, or it can't be opened.
-  [API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows how to create it.
+  [API keys setup](site:/quickstart/api-keys-setup/) shows how to create it.
 
 `the Nominal config file <path> has no profile named '<profile>'. Check Profile, or add the profile to the file.`
 : The file has profiles, but not that one. Profile names are case-sensitive.

@@ -33,7 +33,7 @@ The file is YAML. A key the relay doesn't know stops it at startup. Each release
   instance's REST API base URL from, as its `token` and `base_url`. Runs go in the profile's
   `workspace_rid`, or in the organization's default workspace when it has none. It is the same
   file the block reads in direct mode, and Nominal's other clients too.
-  [API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows what the file holds.
+  [API keys setup](site:/quickstart/api-keys-setup/) shows what the file holds.
 
 `profile_file`
 : Default `""`, the standard location in the home folder of the account running the relay:

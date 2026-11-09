@@ -60,7 +60,7 @@ and **Run title** and **Ref name** when **Create run** is **None**.
 : Default `'default'`. Direct mode only. The profile in Nominal's config file to read the API key
   and the instance's REST API base URL from, as its `token` and `base_url`. It is the same file
   Nominal's other clients read.
-  [API keys setup](site:/quickstart/quickstart/api-keys-setup/) shows what the file holds.
+  [API keys setup](site:/quickstart/api-keys-setup/) shows what the file holds.
 
 **Profile file**
 : Default `''`, the standard location: `~/.config/nominal/config.yml`, or
