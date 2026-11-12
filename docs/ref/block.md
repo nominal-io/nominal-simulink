@@ -44,11 +44,15 @@ and **Run title** and **Ref name** when **Create run** is **None**.
 
 **Execution ID**
 : Default `'auto'`. Sent as the tag `execution-id` on every channel the block writes, so each
-  run can be picked out of the dataset. `'auto'` makes a new ID when each run starts, such as
-  `20261019-141048-3f2a9c`: the run's start time in UTC, then six hexadecimal digits that differ
-  between runs starting in the same second. Text or a number sets the ID yourself, such as a
-  variable a script sets for each run. `''` sends no execution ID. **Tags (key and value pairs)**
-  can't have an `execution-id` key unless this field is empty. See
+  run can be picked out of the dataset.
+
+  - `'auto'` makes a new ID when each run starts, such as `20261019-141048-3f2a9c`: the run's
+    start time in UTC, then six hexadecimal digits that differ between runs starting in the same
+    second.
+  - Text or a number is used as the ID, such as a variable a script sets for each run.
+  - `''` sends no execution ID.
+
+  **Tags (key and value pairs)** can't have an `execution-id` key unless this field is empty. See
   [Run a campaign of simulations](../guides/campaigns.md).
 
 **Mode**
@@ -68,15 +72,20 @@ and **Run title** and **Ref name** when **Create run** is **None**.
   file to read **Profile** from, when it is somewhere else.
 
 **Create run**
-: Default **None**. **One per execution** creates a run in Nominal when each run of the model
-  starts, so it can be watched live, and sets the run's end once the last row is sent. The run
-  shows the dataset's points with this execution's tags, **Execution ID** included. **One per
-  model** shares one run between every execution with the same title: the first execution creates
-  it, later ones extend its end, and it shows every point in the dataset, so every execution's
-  points are in it whatever their tags. Finding the run means searching every run whose title
-  contains this one, so the more runs have similar titles, the longer an execution takes to
-  start. In direct mode, executions that start at the same moment, such as `parsim` workers, can
-  each create the run.
+: Default **None**, which creates no run.
+
+  - **One per execution** creates a run in Nominal when each run of the model starts, so it can
+    be watched live, and sets the run's end once the last row is sent. The run shows the
+    dataset's points with this execution's tags, **Execution ID** included.
+  - **One per model** shares one run between every execution with the same title. The first
+    execution creates it and later ones extend its end. It shows every point in the dataset,
+    whatever their tags.
+
+  With **One per model**, finding the run means searching every run whose title contains this
+  one, so the more runs have similar titles, the longer an execution takes to start. In direct
+  mode, executions that start at the same moment, such as `parsim` workers, can each create the
+  run.
+
   When a run can't be created or ended, the block warns and the rows still go to the dataset. In
   proxy mode, `nmproxy` creates and ends the run with its own profile, and a run it can't create
   or end shows in [its log](nmproxy.md#log) instead.
@@ -151,8 +160,10 @@ The dataset RID, the channel names, the tags, and with **Create run** on the run
 Lengths are in bytes, and the run title and ref name count as 0 when **Create run** is **None**.
 **Execution ID** counts as a tag with the key `execution-id`, and an automatic one is 22
 characters long. With a 70-character RID, 10-character names, an automatic execution ID as the
-only tag and no run, that is 103 channels. The RID, each name, each tag key and value, the
-run title and the ref name can each be at most 256 bytes. A block can have at most 64 tags, and
+only tag and no run, that is 103 channels.
+
+The RID, each name, each tag key and value, the run title and the ref name can each be at most
+256 bytes. A block can have at most 64 tags, and
 at most 169 channels however short the names are. [The frame protocol](frames.md#limits) has the
 reasoning behind these limits.
 
